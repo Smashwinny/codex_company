@@ -9,6 +9,7 @@ from codex_quota.cli import (
     _bar,
     _color_flag,
     _fmt_countdown,
+    error_hint,
     render_text,
     run_cli,
     snapshot_to_dict,
@@ -67,6 +68,30 @@ class TestHelpers:
         d = snapshot_to_dict(snap())
         payload = json.dumps(d, ensure_ascii=False)
         assert '"plan_type": "prolite"' in payload
+
+
+class TestErrorHint:
+    def test_not_installed(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        hint = error_hint("未找到 codex 可执行文件。…")
+        assert "安装 Codex CLI" in hint
+
+    def test_not_logged_in(self, tmp_path, monkeypatch):
+        # CODEX_HOME 下没有 auth.json → 引导登录
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        hint = error_hint("app-server 响应超时（8 秒）")
+        assert "codex login" in hint
+
+    def test_timeout_when_logged_in(self, tmp_path, monkeypatch):
+        (tmp_path / "auth.json").write_text("{}")
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        hint = error_hint("app-server 响应超时（8 秒）")
+        assert "稍后" in hint
+
+    def test_generic_error_no_hint(self, tmp_path, monkeypatch):
+        (tmp_path / "auth.json").write_text("{}")
+        monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+        assert error_hint("jsonrpc-error: weird") is None
 
 
 class TestRunCliErrors:

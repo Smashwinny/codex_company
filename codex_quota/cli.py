@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import datetime as dt
 import json
 import sys
@@ -23,6 +22,8 @@ from .app_server import (
     QuotaSnapshot,
     QuotaWindow,
     find_codex_bin,
+    is_logged_in,
+    snapshot_to_dict,
 )
 
 BAR_WIDTH = 20
@@ -106,8 +107,15 @@ def render_text(snap: QuotaSnapshot) -> str:
     return "\n".join(lines)
 
 
-def snapshot_to_dict(snap: QuotaSnapshot) -> dict:
-    return dataclasses.asdict(snap)
+def error_hint(message: str) -> Optional[str]:
+    """根据错误信息和本地状态给出可操作的引导。"""
+    if "未找到 codex" in message or "CODEX_BIN" in message:
+        return "请先安装 Codex CLI（npm i -g @openai/codex）并运行 codex login"
+    if not is_logged_in():
+        return "未登录：请先运行 codex login"
+    if "超时" in message:
+        return "codex app-server 响应缓慢，稍后点刷新重试"
+    return None
 
 
 def run_cli(argv: Optional[list[str]] = None) -> int:
@@ -123,7 +131,8 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         print(f"错误: {exc}", file=sys.stderr)
         return 2
     except AppServerError as exc:
-        print(f"查询失败: {exc}（如未登录，请先运行 codex login）", file=sys.stderr)
+        hint = error_hint(str(exc))
+        print(f"查询失败: {exc}" + (f"（{hint}）" if hint else ""), file=sys.stderr)
         return 3
 
     if args.json:

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import time
 from typing import Optional
 
 from PyQt6.QtCore import QPoint, Qt, QTimer
@@ -26,7 +27,8 @@ from PyQt6.QtWidgets import (
 )
 
 from ..app_server import QuotaSnapshot, QuotaWindow
-from ..fetcher import QuotaFetcher
+from ..cli import error_hint
+from ..fetcher import QuotaFetcher, RefreshScheduler
 from ..state import StateStore, ViewState
 from .widgets import QuotaBar, threshold_color
 
@@ -112,14 +114,20 @@ class FloatingHud(QWidget):
         self.setMinimumWidth(280)
 
         self._store = StateStore()
+        self._scheduler = RefreshScheduler()
         self._fetcher: Optional[QuotaFetcher] = None
         self._drag_pos: Optional[QPoint] = None
         self._rows: list[tuple[QWidget, object]] = []  # (row_widget, QuotaWindow) 供 tick 重排
 
         self._build_ui()
 
+        # 启动即展示 24h 内的缓存（标陈旧），不阻塞等待首次查询
+        cached = self._store.load_cached()
+        if cached.snapshot is not None:
+            self._apply(cached)
+
         self._refresh_timer = QTimer(self)
-        self._refresh_timer.setInterval(REFRESH_INTERVAL_MS)
+        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
         self._refresh_timer.timeout.connect(self.refresh)
         self._refresh_timer.start()
 
@@ -189,11 +197,14 @@ class FloatingHud(QWidget):
 
     def _on_fetch_done(self) -> None:
         self._refresh_btn.setEnabled(True)
+        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
 
     def _on_success(self, snap: QuotaSnapshot) -> None:
+        self._scheduler.on_success()
         self._apply(self._store.on_success(snap))
 
     def _on_error(self, message: str) -> None:
+        self._scheduler.on_failure()
         self._apply(self._store.on_error(message))
 
     def _apply(self, state: ViewState) -> None:
@@ -202,7 +213,11 @@ class FloatingHud(QWidget):
         now_ts = snap.fetched_at if snap else dt.datetime.now().timestamp()
 
         if snap is None:
-            body = QLabel(f"⚠ {state.error or '无数据'}")
+            hint = error_hint(state.error or "")
+            text = f"⚠ {state.error or '无数据'}"
+            if hint:
+                text += f"\n💡 {hint}"
+            body = QLabel(text)
             body.setWordWrap(True)
             body.setStyleSheet(f"color: {FG_DIM};")
             self._content.addWidget(body)
@@ -256,6 +271,20 @@ class FloatingHud(QWidget):
         self._update_footer()
 
     # ---------- 外观与交互 ----------
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        self._scheduler.set_visible(True)
+        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        # 重新显示时若数据已过期，立即补一次刷新
+        fetched = self._store.state.fetched_at
+        if fetched is None or time.time() - fetched > REFRESH_INTERVAL_MS / 1000:
+            self.refresh()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        self._scheduler.set_visible(False)
+        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        super().hideEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)

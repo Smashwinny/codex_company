@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import queue
@@ -110,6 +111,16 @@ def find_codex_bin() -> str:
     return path
 
 
+def codex_home() -> str:
+    """Codex CLI 的数据目录（CODEX_HOME 可覆盖，默认 ~/.codex）。"""
+    return os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+
+
+def is_logged_in() -> bool:
+    """是否存在本地登录凭证（auth.json）。用于错误引导，绝不读取其内容。"""
+    return os.path.isfile(os.path.join(codex_home(), "auth.json"))
+
+
 def _parse_window(raw: Any) -> Optional[QuotaWindow]:
     if not isinstance(raw, dict):
         return None
@@ -142,6 +153,51 @@ def _parse_limit(raw: dict[str, Any]) -> RateLimit:
         primary=_parse_window(raw.get("primary")) or QuotaWindow(),
         secondary=_parse_window(raw.get("secondary")),
         credits=_parse_credits(raw.get("credits")),
+    )
+
+
+def snapshot_to_dict(snap: QuotaSnapshot) -> dict[str, Any]:
+    """序列化为可 JSON 化的 dict（dataclasses.asdict 的别名，集中在一处便于演进）。"""
+    return dataclasses.asdict(snap)
+
+
+def snapshot_from_dict(d: dict[str, Any]) -> QuotaSnapshot:
+    """从 dict 还原快照。字段缺失/多余均容错（缓存跨版本兼容）。"""
+
+    def _window(raw: Any) -> Optional[QuotaWindow]:
+        if not isinstance(raw, dict):
+            return None
+        return QuotaWindow(
+            used_percent=raw.get("used_percent"),
+            window_minutes=raw.get("window_minutes"),
+            reset_at=raw.get("reset_at"),
+        )
+
+    def _credits(raw: Any) -> Optional[Credits]:
+        if not isinstance(raw, dict):
+            return None
+        return Credits(
+            has_credits=bool(raw.get("has_credits")),
+            unlimited=bool(raw.get("unlimited")),
+            balance=raw.get("balance"),
+        )
+
+    limits: list[RateLimit] = []
+    for raw in d.get("limits") or []:
+        if not isinstance(raw, dict):
+            continue
+        limits.append(RateLimit(
+            limit_id=raw.get("limit_id") or "?",
+            limit_name=raw.get("limit_name"),
+            plan_type=raw.get("plan_type"),
+            primary=_window(raw.get("primary")) or QuotaWindow(),
+            secondary=_window(raw.get("secondary")),
+            credits=_credits(raw.get("credits")),
+        ))
+    return QuotaSnapshot(
+        fetched_at=float(d.get("fetched_at") or 0),
+        plan_type=d.get("plan_type"),
+        limits=limits,
     )
 
 
