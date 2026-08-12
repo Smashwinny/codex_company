@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-quota"
+version = "0.1.0"
+description = "Linux 桌面端 Codex 额度实时显示（CLI + 悬浮窗）"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+gui = ["PyQt6>=6.5"]
+test = ["pytest>=8", "PyQt6>=6.5"]
+
+[project.scripts]
+codex-quota = "codex_quota.cli:run_cli"
+
+[tool.setuptools.packages.find]
+include = ["codex_quota*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

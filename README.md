@@ -1,0 +1,72 @@
+# codex-quota
+
+Linux 桌面端 Codex（OpenAI Codex CLI）额度实时显示工具。
+
+- **数据源**：本地 `codex app-server` 的只读 JSON-RPC 方法 `account/rateLimits/read`，
+  不读取 `auth.json`、不接触登录凭证、网络零外发。
+- **隐私**：所有数据仅保留在本机。
+
+> 设计调研与整体规划见 [DESIGN.md](DESIGN.md)。
+
+## 当前状态：M2（CLI + 悬浮窗 HUD）
+
+### 悬浮窗（默认模式）
+
+```bash
+pip install PyQt6        # 或 pip install -e ".[gui]"
+python -m codex_quota    # 启动悬浮窗
+```
+
+- 无边框、置顶、半透明圆角悬浮窗，左键拖动移动位置
+- 每个限流窗口一行：进度条（绿 <70 / 黄 <90 / 红 ≥90）+ 百分比 + 重置倒计时
+- 附加限额桶（如 GPT-5.3-Codex-Spark）自动列出
+- 每 60s 自动刷新，⟳ 按钮手动刷新；取数在后台线程，界面不卡
+- 查询失败时降级显示上次成功数据并标注"数据陈旧"
+- 底部显示数据新鲜度（"更新于 x 前"），每 30s 重排倒计时
+
+> 注意：Qt 6.5+ 的 xcb 插件依赖 `libxcb-cursor0`（`sudo apt install libxcb-cursor0`）。
+
+### CLI 模式
+
+```bash
+python -m codex_quota --cli          # 人类可读输出
+python -m codex_quota --cli --json   # JSON 输出（供脚本/其他 UI 消费）
+```
+
+输出示例：
+
+```
+Codex 额度（套餐: prolite）
+  本周     ██████████████████░░  91%  🔴 5 天 7 小时后重置（08-18 21:30）
+  ── GPT-5.3-Codex-Spark ──
+  本周     ░░░░░░░░░░░░░░░░░░░░   2%  🟢 5 天 8 小时后重置（08-18 22:51）
+更新于 20:15:33
+```
+
+退出码：`0` 成功；`2` 未安装 codex CLI；`3` 查询失败（未登录/超时/协议错误）。
+
+环境变量 `CODEX_BIN` 可指定 codex 可执行文件路径。
+
+## 前提
+
+- 已安装并登录 Codex CLI（`codex login`）
+- Python ≥ 3.10（CLI 模式仅用标准库，零依赖）
+
+## 测试
+
+```bash
+pip install -e ".[test]"
+pytest
+```
+
+## 路线图
+
+- [x] M1 数据源 + CLI
+- [x] M2 PyQt6 悬浮窗（进度条、倒计时、拖动、置顶、60s 自动刷新）
+- [ ] M3 缓存降级、失败退避、未登录引导
+- [ ] M4 系统托盘（GNOME 需 AppIndicator 扩展）
+- [ ] M5 透明度/紧凑展开/开机自启/中英双语
+
+## License
+
+MIT
