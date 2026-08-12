@@ -12,13 +12,48 @@ Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮
 
 ## 快速开始
 
+### 依赖项
+
+| 依赖 | 必需性 | 说明 |
+|------|--------|------|
+| Python ≥ 3.10 | **必需** | 主程序运行时 |
+| Codex CLI（已 `codex login`） | **必需** | Codex 额度的数据源 |
+| libxcb-cursor0 | 悬浮窗必需 | Qt xcb 插件依赖；无 root 时安装脚本自动下载到 `vendor/` |
+| Kimi CLI（`kimi login`） | 可选 | 检测到就自动增加 Kimi 分区，没有则只显示 Codex |
+| 系统托盘（GNOME 需 AppIndicator 扩展） | 可选 | 没有托盘也能用，悬浮窗是主形态 |
+
+### 一键安装
+
 ```bash
-./install.sh          # 一次性：准备 venv + 依赖 + 桌面入口
-./bin/codex-quota     # 启动（脱离终端，终端关闭不影响）
+git clone https://github.com/Smashwinny/codex_company.git
+cd codex_company
+./install.sh
 ```
 
-之后可以在应用菜单搜索 **Codex Quota** 直接点击启动；开机自启在托盘菜单勾选。
-日志：`~/.cache/codex-quota/hud.log`。
+安装脚本会自动：检查依赖（Python 版本 / codex / kimi）→ 创建 `.venv` 并安装 PyQt6
+→ 处理 libxcb-cursor（系统没有就免 root 下载到 `vendor/`）→ 创建应用菜单桌面入口。
+幂等，可重复运行。
+
+### 运行（三选一）
+
+| 方式 | 命令/操作 |
+|------|-----------|
+| 应用菜单 | 搜索 **Codex Quota** 点击启动（推荐） |
+| 命令行 | `./bin/codex-quota`（脱离终端后台运行，关终端不影响） |
+| 开机自启 | 启动后在托盘菜单勾选"开机自启" |
+
+- 停止：`pkill -f "m codex_quota"`（或托盘菜单 → 退出）
+- 日志：`~/.cache/codex-quota/hud.log`
+- 设置：`~/.config/codex-quota/settings.json`（透明度/紧凑模式/位置）
+
+### 只要 CLI（无 GUI 依赖）
+
+CLI 模式只用 Python 标准库，不装 PyQt6 也能跑：
+
+```bash
+python3 -m codex_quota --cli          # 人类可读
+python3 -m codex_quota --cli --json   # JSON（供脚本消费）
+```
 
 ## 功能
 
@@ -41,8 +76,6 @@ Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮
 - **中英双语**：跟随系统语言（`LANG`），`CODEX_QUOTA_LANG=zh|en` 可强制指定
 - 底部显示数据新鲜度（"更新于 x 前"），每 30s 重排倒计时
 
-> 注意：Qt 6.5+ 的 xcb 插件依赖 `libxcb-cursor0`（`sudo apt install libxcb-cursor0`）。
-
 ### 系统托盘
 
 托盘可用时（KDE 开箱即用；GNOME 需 AppIndicator 类扩展）自动启用：
@@ -53,37 +86,29 @@ Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮
 - 悬浮窗的 × 变为"隐藏到托盘"，从托盘菜单退出应用
 - 托盘不可用（如未装扩展的 GNOME）时自动回退：仅悬浮窗，关窗即退出
 
-### CLI 模式
-
-```bash
-python -m codex_quota --cli          # 人类可读输出
-python -m codex_quota --cli --json   # JSON 输出（供脚本/其他 UI 消费）
-```
-
-输出示例：
+### CLI 输出示例
 
 ```
-Codex 额度（套餐: prolite）
-  本周     ██░░░░░░░░░░░░░░░░░░   剩 9%  🔴 5 天 13 小时后重置（08-18 10:10）
+Codex（套餐: prolite）
+  本周     █░░░░░░░░░░░░░░░░░░░   剩 3%  🔴 5 天 10 小时后重置（08-18 10:10）
   ── GPT-5.3-Codex-Spark ──
-  本周     ████████████████████  剩 98%  🟢 5 天 14 小时后重置（08-18 11:31）
-更新于 20:15:33
+  本周     ████████████████████  剩 98%  🟢 5 天 12 小时后重置（08-18 11:31）
+更新于 23:30:35
+
+Kimi（套餐: kimi-code/k3）
+  本周     ████████████████░░░░  剩 82%  🟢 6 天 15 小时后重置（08-19 14:32）
+  5小时    ██░░░░░░░░░░░░░░░░░░  剩 10%  🔴 1 分后重置（08-12 23:32）
+更新于 23:30:39
 ```
 
-退出码：`0` 成功；`2` 未安装 codex CLI；`3` 查询失败（未登录/超时/协议错误）。
-
-环境变量 `CODEX_BIN` 可指定 codex 可执行文件路径。
-
-## 前提
-
-- 已安装并登录 Codex CLI（`codex login`）
-- Python ≥ 3.10（CLI 模式仅用标准库，零依赖）
+退出码：`0` 至少一个 provider 成功；`2` 未安装 CLI 类错误；`3` 全部查询失败。
 
 ## 测试
 
 ```bash
-pip install -e ".[test]"
-pytest
+./install.sh                              # 已建好 .venv 则跳过
+.venv/bin/pip install -e ".[test]"
+.venv/bin/python -m pytest                # 130+ 项，无需显示服务器（offscreen）
 ```
 
 ## 路线图
