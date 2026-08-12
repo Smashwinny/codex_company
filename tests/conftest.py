@@ -14,9 +14,10 @@ os.environ["CODEX_QUOTA_LANG"] = "zh"
 
 @pytest.fixture(autouse=True)
 def _isolated_xdg_dirs(tmp_path, monkeypatch):
-    """每个测试独立的 XDG 目录，杜绝缓存/设置/自启文件跨测试泄漏。"""
+    """每个测试独立的 XDG 目录与 CODEX_HOME，杜绝缓存/设置/配置跨测试泄漏。"""
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     yield
     from codex_quota.i18n import set_language
 

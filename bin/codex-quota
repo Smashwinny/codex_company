@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# codex-quota 启动器：脱离终端后台运行，终端关闭不影响。
+# 日志：~/.cache/codex-quota/hud.log
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="$ROOT/.venv/bin/python"
+[ -x "$PY" ] || PY=python3
+
+# 无 root 时 vendor/ 里的 libxcb-cursor 兜底（系统已装则无需）
+if [ -d "$ROOT/vendor/lib" ]; then
+    export LD_LIBRARY_PATH="$ROOT/vendor/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
+LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-quota"
+mkdir -p "$LOG_DIR"
+
+if pgrep -f "[-]m codex_quota" >/dev/null 2>&1; then
+    echo "codex-quota 已在运行"
+    exit 0
+fi
+
+setsid "$PY" -m codex_quota "$@" >>"$LOG_DIR/hud.log" 2>&1 < /dev/null &
+disown
+echo "codex-quota 已启动（日志: $LOG_DIR/hud.log）"

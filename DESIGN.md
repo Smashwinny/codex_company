@@ -176,3 +176,48 @@ codex_company/
 - 刷新/进程管理参考：https://github.com/qcodingdev/codex-usage-monitor （查完即释放、活跃/空闲双频）
 - UI 形态参考：https://github.com/DiMY-CN/CodexQuotaMonitor （紧凑悬浮窗 + 窗口分类逻辑）
 - Linux 打包参考：https://github.com/mm7894215/TokenTracker （AppImage、ayatana 依赖清单）
+
+## 10. M6 设计：多模型用量（Kimi 等）
+
+### 10.1 Kimi 数据源（2026-08-12 本机实测 ✅）
+
+TUI 的 `/status` 无法非交互调用（`-p "/status"` 会被当成 prompt 发给模型），
+但 **`kimi web` 本地服务器暴露了用量 API**：
+
+```bash
+kimi web --port <port>          # 启动日志打印 Bearer Token
+curl -H "Authorization: Bearer <token>" http://127.0.0.1:<port>/api/v1/oauth/usage
+```
+
+实测返回（kimi-code 0.35.0）：
+
+```json
+{"data": {"kind": "ok",
+  "summary": {"window": {"duration": 1, "unit": "week"}, "used": 13, "limit": 100,
+              "reset_at": "2026-08-19T06:32:10.901710Z"},
+  "limits":  [{"window": {"duration": 5, "unit": "hour"}, "used": 67, "limit": 100,
+               "reset_at": "..."}],
+  "extra_usage": null}}
+```
+
+- 字段映射：`used/limit*100` → `used_percent`；`duration*unit` → `window_minutes`；
+  ISO8601 `reset_at` → Unix 秒。与现有 `QuotaWindow` 模型完全兼容。
+- 令牌每次启动随机生成，从子进程 stdout 解析；服务器启动约 3–5s，
+  因此**保活整个应用周期**（不做 codex 那样的即查即毁），应用退出时 terminate。
+- 附带信息：`/api/v1/providers` 可拿模型列表（k3 / k3-256k / kimi-for-coding /
+  kimi-for-coding-highspeed），`/api/v1/auth` 可拿认证状态。
+
+### 10.2 Provider 抽象
+
+```
+codex_quota/providers/
+├── base.py    # 协议: name / fetch() -> QuotaSnapshot / close()
+├── codex.py   # 现有 AppServerClient 包装
+└── kimi.py    # KimiWebProcess: spawn kimi web → 解析 token → 轮询 /oauth/usage
+```
+
+- `QuotaSnapshot` 增加 `provider` 字段；HUD 按 provider 分区渲染（标题行带
+  provider 徽章：Codex 绿 / Kimi 蓝紫，与 fast 徽章同款 pill 语言）
+- `QuotaFetcher` 改为聚合多个 provider 并发查询，单 provider 失败不影响其他
+  （分区显示各自错误/陈旧状态）
+- 调度/缓存/托盘逻辑保持不变，按 provider 分别缓存 last-good

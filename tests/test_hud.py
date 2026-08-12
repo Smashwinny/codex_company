@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QCoreApplication, QEvent, QObject, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -139,6 +139,17 @@ class TestInteractions:
         assert len(live_hud._rows) == 2  # 重新构建
         assert live_hud._refresh_btn.isEnabled()  # finished 后恢复可用
         assert "更新于" in live_hud._footer.text()
+
+    def test_refresh_after_delete_later_no_crash(self, live_hud):
+        """回归：fetcher deleteLater 后再次刷新不得访问悬垂引用（曾致崩溃）。"""
+        # 构造函数已 refresh 一次；处理延迟删除事件，模拟事件循环真正删掉 fetcher
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        live_hud.refresh()  # 旧代码：isRunning() 访问已删除 C++ 对象 → RuntimeError
+        assert len(live_hud._rows) == 2
+        # 再来一轮，确保状态机稳定
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        live_hud.refresh()
+        assert len(live_hud._rows) == 2
 
     def test_close_button_hides(self, live_hud):
         live_hud.show()

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import html
 import time
 from typing import Optional
 
@@ -32,6 +33,7 @@ from ..app_server import QuotaSnapshot, QuotaWindow
 from ..cli import error_hint
 from ..fetcher import QuotaFetcher, RefreshScheduler
 from ..i18n import tr
+from ..model_info import ModelInfo, read_model_info
 from ..settings import Settings
 from ..state import StateStore, ViewState
 from .widgets import QuotaBar, threshold_color
@@ -44,6 +46,29 @@ OPACITY_MIN = 0.3
 BG = QColor(13, 17, 23, 230)   # 半透明深色底
 FG = "#e6edf3"
 FG_DIM = "#8b949e"
+
+# 模型徽章：fast（Spark / fast tier）用实心橙 pill + ⚡；普通模型用灰描边 pill
+BADGE_FAST_STYLE = (
+    "background-color: #9e6a03; color: #ffe8b0; border: 1px solid #d29922;"
+    "border-radius: 8px; padding: 0px 7px; font-weight: bold; font-size: 10px;"
+)
+BADGE_NORMAL_STYLE = (
+    "color: #8b949e; border: 1px solid #30363d;"
+    "border-radius: 8px; padding: 0px 7px; font-size: 10px;"
+)
+EFFORT_COLORS = {"low": "#3fb950", "medium": "#d29922", "high": "#f85149", "xhigh": "#f85149"}
+
+
+def _badge_html(info: ModelInfo) -> str:
+    """徽章富文本：effort 按等级着色，fast 前缀 ⚡。"""
+    parts = [html.escape(info.model)]
+    if info.effort:
+        color = EFFORT_COLORS.get(info.effort.lower(), FG_DIM)
+        parts.append(f"<span style='color:{color}'>{html.escape(info.effort)}</span>")
+    if info.service_tier and info.service_tier.lower() not in ("default", ""):
+        parts.append(html.escape(info.service_tier))
+    text = " · ".join(parts)
+    return ("⚡ " + text) if info.is_fast else text
 
 
 def _countdown_text(w: QuotaWindow, now_ts: float) -> str:
@@ -156,6 +181,9 @@ class FloatingHud(QWidget):
     def _build_ui(self) -> None:
         self._title = QLabel(tr("⚡ Codex 额度"))
         self._title.setStyleSheet(f"color: {FG}; font-weight: bold;")
+        self._model_badge = QLabel()
+        self._model_badge.setTextFormat(Qt.TextFormat.RichText)
+        self._model_badge.hide()  # 读到配置才显示
         self._refresh_btn = QToolButton()
         self._refresh_btn.setText("⟳")
         self._refresh_btn.setToolTip(tr("立即刷新"))
@@ -169,6 +197,7 @@ class FloatingHud(QWidget):
         title_bar = QHBoxLayout()
         title_bar.setContentsMargins(0, 0, 0, 0)
         title_bar.addWidget(self._title)
+        title_bar.addWidget(self._model_badge)
         title_bar.addStretch(1)
         title_bar.addWidget(self._refresh_btn)
         title_bar.addWidget(self._close_btn)
@@ -198,20 +227,24 @@ class FloatingHud(QWidget):
     # ---------- 数据流 ----------
 
     def refresh(self) -> None:
-        if self._fetcher is not None and self._fetcher.isRunning():
+        if self._fetcher is not None:
             return  # 上一次查询还在进行，不叠加
         self._store.begin_refresh()
         self._refresh_btn.setEnabled(False)
-        self._fetcher = QuotaFetcher(parent=self)
-        self._fetcher.succeeded.connect(self._on_success)
-        self._fetcher.failed.connect(self._on_error)
-        self._fetcher.finished.connect(self._on_fetch_done)
-        self._fetcher.finished.connect(self._fetcher.deleteLater)  # 防线程对象累积
-        self._fetcher.start()
+        fetcher = QuotaFetcher(parent=self)
+        fetcher.succeeded.connect(self._on_success)
+        fetcher.failed.connect(self._on_error)
+        fetcher.finished.connect(self._on_fetch_done)
+        fetcher.finished.connect(fetcher.deleteLater)  # 防线程对象累积
+        self._fetcher = fetcher
+        fetcher.start()
 
     def _on_fetch_done(self) -> None:
         self._refresh_btn.setEnabled(True)
         self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        # fetcher 已 deleteLater，立刻清空引用——
+        # 否则下次 refresh 的 isRunning() 会访问已删除的 C++ 对象导致崩溃
+        self._fetcher = None
 
     def _on_success(self, snap: QuotaSnapshot) -> None:
         self._scheduler.on_success()
@@ -223,6 +256,7 @@ class FloatingHud(QWidget):
 
     def _apply(self, state: ViewState) -> None:
         self._clear_content()
+        self._update_model_badge()  # 每次刷新重读 config.toml，改模型即时生效
         snap = state.snapshot
         now_ts = snap.fetched_at if snap else dt.datetime.now().timestamp()
 
@@ -267,6 +301,16 @@ class FloatingHud(QWidget):
         row.bind(w, now_ts, show_countdown=not self._compact)
         self._rows.append((row, w))
         self._content.addWidget(row)
+
+    def _update_model_badge(self) -> None:
+        info = read_model_info()
+        if info is None:
+            self._model_badge.hide()
+            return
+        self._model_badge.setText(_badge_html(info))
+        self._model_badge.setStyleSheet(
+            BADGE_FAST_STYLE if info.is_fast else BADGE_NORMAL_STYLE)
+        self._model_badge.show()
 
     def _update_footer(self, state: Optional[ViewState] = None) -> None:
         state = state or self._store.state

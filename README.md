@@ -8,16 +8,23 @@ Linux 桌面端 Codex（OpenAI Codex CLI）额度实时显示工具。
 
 > 设计调研与整体规划见 [DESIGN.md](DESIGN.md)。
 
-## 当前状态：M5（全部里程碑完成）
+## 快速开始
+
+```bash
+./install.sh          # 一次性：准备 venv + 依赖 + 桌面入口
+./bin/codex-quota     # 启动（脱离终端，终端关闭不影响）
+```
+
+之后可以在应用菜单搜索 **Codex Quota** 直接点击启动；开机自启在托盘菜单勾选。
+日志：`~/.cache/codex-quota/hud.log`。
+
+## 功能
 
 ### 悬浮窗（默认模式）
 
-```bash
-pip install PyQt6        # 或 pip install -e ".[gui]"
-python -m codex_quota    # 启动悬浮窗
-```
-
 - 无边框、置顶、半透明圆角悬浮窗，左键拖动移动位置（**位置记忆**）
+- **模型徽章**：标题栏显示当前模型与推理强度（读 `~/.codex/config.toml`，每次刷新重读），
+  fast 模型（Spark / fast tier）显示 ⚡ 橙色实心徽章，effort 分级着色（low 绿 / medium 黄 / high 红）
 - 每个限流窗口一行：进度条 + 剩余百分比 + 重置倒计时（显示**剩余**额度；绿 >30% / 黄 ≤30% / 红 ≤10%）
 - 附加限额桶（如 GPT-5.3-Codex-Spark）自动列出
 - **滚轮调透明度**（0.3–1.0，持久化）；**双击切换紧凑模式**（只留主限额行）
@@ -81,7 +88,8 @@ pytest
 - [x] M2 PyQt6 悬浮窗（进度条、倒计时、拖动、置顶、60s 自动刷新）
 - [x] M3 缓存降级、失败退避、未登录引导
 - [x] M4 系统托盘（GNOME 需 AppIndicator 扩展）
-- [x] M5 透明度/紧凑展开/开机自启/中英双语/位置记忆
+- [x] M5 透明度/紧凑展开/开机自启/i18n/位置记忆
+- [ ] M6 多模型用量（Kimi 已探明数据源：`kimi web` + `/api/v1/oauth/usage`，见 DESIGN.md §10）
 
 ## 环境变量
 
