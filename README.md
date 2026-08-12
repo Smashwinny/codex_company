@@ -8,7 +8,7 @@ Linux 桌面端 Codex（OpenAI Codex CLI）额度实时显示工具。
 
 > 设计调研与整体规划见 [DESIGN.md](DESIGN.md)。
 
-## 当前状态：M3（CLI + 悬浮窗 HUD + 健壮性）
+## 当前状态：M4（CLI + 悬浮窗 HUD + 健壮性 + 系统托盘）
 
 ### 悬浮窗（默认模式）
 
@@ -29,6 +29,16 @@ python -m codex_quota    # 启动悬浮窗
 - 底部显示数据新鲜度（"更新于 x 前"），每 30s 重排倒计时
 
 > 注意：Qt 6.5+ 的 xcb 插件依赖 `libxcb-cursor0`（`sudo apt install libxcb-cursor0`）。
+
+### 系统托盘
+
+托盘可用时（KDE 开箱即用；GNOME 需 AppIndicator 类扩展）自动启用：
+
+- 彩色圆点图标反映**最低剩余量**（绿 >30% / 黄 ≤30% / 红 ≤10%，无数据灰）
+- 左键单击：显示/隐藏悬浮窗
+- 右键菜单：显隐悬浮窗 / 立即刷新 / 额度摘要 / 退出
+- 悬浮窗的 × 变为"隐藏到托盘"，从托盘菜单退出应用
+- 托盘不可用（如未装扩展的 GNOME）时自动回退：仅悬浮窗，关窗即退出
 
 ### CLI 模式
 
@@ -68,7 +78,7 @@ pytest
 - [x] M1 数据源 + CLI
 - [x] M2 PyQt6 悬浮窗（进度条、倒计时、拖动、置顶、60s 自动刷新）
 - [x] M3 缓存降级、失败退避、未登录引导
-- [ ] M4 系统托盘（GNOME 需 AppIndicator 扩展）
+- [x] M4 系统托盘（GNOME 需 AppIndicator 扩展）
 - [ ] M5 透明度/紧凑展开/开机自启/中英双语
 
 ## License

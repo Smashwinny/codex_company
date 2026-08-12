@@ -20,7 +20,7 @@ def main() -> int:
 
 def _run_hud(args: list[str]) -> int:
     try:
-        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
     except ImportError:
         print(
             "悬浮窗模式需要 PyQt6：pip install PyQt6\n"
@@ -34,6 +34,18 @@ def _run_hud(args: list[str]) -> int:
     app = QApplication([sys.argv[0], *args])
     app.setApplicationName("codex-quota")
     hud = FloatingHud()
+
+    if QSystemTrayIcon.isSystemTrayAvailable():
+        from .ui.tray import QuotaTray
+
+        # 有托盘：关窗只是隐藏，从托盘菜单退出
+        app.setQuitOnLastWindowClosed(False)
+        tray = QuotaTray(hud, app)
+        tray.show()
+    else:
+        # GNOME 默认无托盘（需 AppIndicator 扩展）：关窗即退出
+        print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
+
     hud.show()
     return app.exec()
 

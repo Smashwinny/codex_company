@@ -15,7 +15,7 @@ import datetime as dt
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QPoint, Qt, QTimer
+from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QMouseEvent, QPainter
 from PyQt6.QtWidgets import (
     QFrame,
@@ -102,6 +102,8 @@ class _WindowRow(QFrame):
 
 
 class FloatingHud(QWidget):
+    state_changed = pyqtSignal(object)  # ViewState；托盘等跟随更新
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("codex-quota")
@@ -245,6 +247,7 @@ class FloatingHud(QWidget):
 
         self._update_footer(state)
         self.adjustSize()
+        self.state_changed.emit(state)
 
     def _add_window_row(self, w: QuotaWindow, now_ts: float) -> None:
         row = _WindowRow()
