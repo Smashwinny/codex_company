@@ -87,6 +87,7 @@ class TestQuotaTray:
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
         assert texts[0] in ("隐藏悬浮窗", "显示悬浮窗")
         assert texts[1] == "立即刷新"
+        assert texts[2] == "开机自启"
         assert texts[-1] == "退出"
         # 初始无数据 → 摘要一行
         assert "无数据" in texts
@@ -96,11 +97,21 @@ class TestQuotaTray:
         hud._apply(hud._store.on_success(snap()))
         # 校验真实菜单顺序（含分隔符过滤后）
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
-        assert texts == ["显示悬浮窗", "立即刷新",
+        assert texts == ["显示悬浮窗", "立即刷新", "开机自启",
                          "本周 剩 9%", "GPT-5.3-Codex-Spark · 本周 剩 98%",
                          "退出"]
         assert all(not a.isEnabled() for a in t._summary_actions)
         assert "剩 9%" in t.tray.toolTip()
+
+    def test_autostart_toggle(self, tray):
+        from codex_quota import autostart
+
+        t, _hud = tray
+        assert autostart.is_enabled() is False
+        t.action_autostart.setChecked(True)
+        assert autostart.is_enabled() is True
+        t.action_autostart.setChecked(False)
+        assert autostart.is_enabled() is False
 
     def test_tooltip_marks_stale(self, tray):
         t, hud = tray

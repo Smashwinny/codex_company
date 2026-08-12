@@ -25,6 +25,7 @@ from .app_server import (
     is_logged_in,
     snapshot_to_dict,
 )
+from .i18n import tr
 
 BAR_WIDTH = 20
 
@@ -50,18 +51,18 @@ def _color_flag(remaining_percent: Optional[float]) -> str:
 
 def _fmt_countdown(seconds: Optional[float]) -> str:
     if seconds is None:
-        return "重置时间未知"
+        return tr("重置时间未知")
     if seconds <= 0:
-        return "即将重置"
+        return tr("即将重置")
     total = int(seconds)
     days, rem = divmod(total, 86400)
     hours, rem = divmod(rem, 3600)
     mins = rem // 60
     if days:
-        return f"{days} 天 {hours} 小时后重置"
+        return tr("{d} 天 {h} 小时后重置").format(d=days, h=hours)
     if hours:
-        return f"{hours} 小时 {mins} 分后重置"
-    return f"{mins} 分后重置"
+        return tr("{h} 小时 {m} 分后重置").format(h=hours, m=mins)
+    return tr("{m} 分后重置").format(m=mins)
 
 
 def _fmt_reset_at(reset_at: Optional[float]) -> str:
@@ -73,7 +74,7 @@ def _fmt_reset_at(reset_at: Optional[float]) -> str:
 
 def _render_window(w: QuotaWindow, now: float) -> str:
     rem = w.remaining_percent
-    pct = "?" if rem is None else f"剩 {rem:.0f}%"
+    pct = "?" if rem is None else tr("剩 {p}%").format(p=f"{rem:.0f}")
     countdown = _fmt_countdown(w.reset_in_seconds(now)) + _fmt_reset_at(w.reset_at)
     return f"{w.label:<6} {_bar(rem)} {pct:>6}  {_color_flag(rem)} {countdown}"
 
@@ -82,18 +83,18 @@ def render_text(snap: QuotaSnapshot) -> str:
     now = snap.fetched_at
     main = snap.primary_limit
     if main is None:
-        return "Codex 额度：无数据"
+        return tr("Codex 额度：无数据")
 
-    plan = f"套餐: {snap.plan_type}" if snap.plan_type else "套餐未知"
-    lines = [f"Codex 额度（{plan}）"]
+    plan = tr("套餐: {p}").format(p=snap.plan_type) if snap.plan_type else tr("套餐未知")
+    lines = [tr("Codex 额度（{p}）").format(p=plan)]
 
     lines.append("  " + _render_window(main.primary, now))
     if main.secondary is not None:
         lines.append("  " + _render_window(main.secondary, now))
     if main.credits is not None and main.credits.has_credits:
         c = main.credits
-        balance = "无限" if c.unlimited else (c.balance or "?")
-        lines.append(f"  信用额度余额: {balance}")
+        balance = tr("无限") if c.unlimited else (c.balance or "?")
+        lines.append("  " + tr("信用额度余额: {b}").format(b=balance))
 
     for extra in snap.limits[1:]:
         name = extra.limit_name or extra.limit_id
@@ -103,18 +104,18 @@ def render_text(snap: QuotaSnapshot) -> str:
             lines.append("  " + _render_window(extra.secondary, now))
 
     ts = dt.datetime.fromtimestamp(snap.fetched_at).astimezone()
-    lines.append(f"更新于 {ts:%H:%M:%S}")
+    lines.append(tr("更新于 {f}").format(f=f"{ts:%H:%M:%S}"))
     return "\n".join(lines)
 
 
 def error_hint(message: str) -> Optional[str]:
     """根据错误信息和本地状态给出可操作的引导。"""
     if "未找到 codex" in message or "CODEX_BIN" in message:
-        return "请先安装 Codex CLI（npm i -g @openai/codex）并运行 codex login"
+        return tr("请先安装 Codex CLI（npm i -g @openai/codex）并运行 codex login")
     if not is_logged_in():
-        return "未登录：请先运行 codex login"
+        return tr("未登录：请先运行 codex login")
     if "超时" in message:
-        return "codex app-server 响应缓慢，稍后点刷新重试"
+        return tr("codex app-server 响应缓慢，稍后点刷新重试")
     return None
 
 
@@ -128,11 +129,12 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         client = AppServerClient(codex_bin=find_codex_bin(), timeout=args.timeout)
         snap = client.read_rate_limits()
     except CodexNotFoundError as exc:
-        print(f"错误: {exc}", file=sys.stderr)
+        print(tr("错误: {e}").format(e=exc), file=sys.stderr)
         return 2
     except AppServerError as exc:
         hint = error_hint(str(exc))
-        print(f"查询失败: {exc}" + (f"（{hint}）" if hint else ""), file=sys.stderr)
+        msg = tr("查询失败: {e}").format(e=exc)
+        print(msg + (f"（{hint}）" if hint else ""), file=sys.stderr)
         return 3
 
     if args.json:

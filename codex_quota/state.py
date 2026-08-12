@@ -99,11 +99,13 @@ class StateStore:
 
     @staticmethod
     def freshness_text(fetched_at: Optional[float], now: Optional[float] = None) -> str:
+        from .i18n import tr
+
         if fetched_at is None:
-            return "无数据"
+            return tr("无数据")
         age = max(0.0, (now if now is not None else time.time()) - fetched_at)
         if age < 60:
-            return f"{int(age)} 秒前"
+            return tr("{n} 秒前").format(n=int(age))
         if age < 3600:
-            return f"{int(age // 60)} 分钟前"
-        return f"{int(age // 3600)} 小时前"
+            return tr("{n} 分钟前").format(n=int(age // 60))
+        return tr("{n} 小时前").format(n=int(age // 3600))

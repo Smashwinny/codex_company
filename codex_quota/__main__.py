@@ -34,6 +34,7 @@ def _run_hud(args: list[str]) -> int:
     app = QApplication([sys.argv[0], *args])
     app.setApplicationName("codex-quota")
     hud = FloatingHud()
+    hud.restore_position()
 
     if QSystemTrayIcon.isSystemTrayAvailable():
         from .ui.tray import QuotaTray

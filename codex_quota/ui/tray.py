@@ -13,6 +13,8 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
+from .. import autostart
+from ..i18n import tr
 from ..state import StateStore, ViewState
 from .widgets import COLOR_UNKNOWN, threshold_color
 
@@ -50,7 +52,7 @@ def summary_lines(state: ViewState) -> list[str]:
     """菜单/提示中的额度摘要行。"""
     snap = state.snapshot
     if snap is None:
-        return ["无数据"]
+        return [tr("无数据")]
     lines: list[str] = []
     for limit in snap.limits:
         prefix = "" if limit is snap.primary_limit else f"{limit.limit_name or limit.limit_id} · "
@@ -58,9 +60,11 @@ def summary_lines(state: ViewState) -> list[str]:
             if w is None:
                 continue
             rem = w.remaining_percent
-            lines.append(f"{prefix}{w.label} 剩 {rem:.0f}%" if rem is not None
-                         else f"{prefix}{w.label} 未知")
-    return lines or ["无数据"]
+            if rem is not None:
+                lines.append(f"{prefix}{w.label} " + tr("剩 {p}%").format(p=f"{rem:.0f}"))
+            else:
+                lines.append(f"{prefix}{w.label} " + tr("未知"))
+    return lines or [tr("无数据")]
 
 
 class QuotaTray(QObject):
@@ -72,18 +76,23 @@ class QuotaTray(QObject):
         self._app = app
 
         self.tray = QSystemTrayIcon(make_dot_icon(COLOR_UNKNOWN), parent=self)
-        self.tray.setToolTip("Codex 额度")
+        self.tray.setToolTip(tr("Codex 额度"))
 
-        self.action_toggle = QAction("隐藏悬浮窗", self)
+        self.action_toggle = QAction(tr("显示悬浮窗"), self)
         self.action_toggle.triggered.connect(self._toggle_hud)
-        self.action_refresh = QAction("立即刷新", self)
+        self.action_refresh = QAction(tr("立即刷新"), self)
         self.action_refresh.triggered.connect(self._hud.refresh)
-        self.action_quit = QAction("退出", self)
+        self.action_autostart = QAction(tr("开机自启"), self)
+        self.action_autostart.setCheckable(True)
+        self.action_autostart.setChecked(autostart.is_enabled())
+        self.action_autostart.toggled.connect(self._toggle_autostart)
+        self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
         self._menu = QMenu()
         self._menu.addAction(self.action_toggle)
         self._menu.addAction(self.action_refresh)
+        self._menu.addAction(self.action_autostart)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -97,9 +106,6 @@ class QuotaTray(QObject):
         self.update_state(hud._store.state)
         self._sync_toggle_text()
 
-    def _sync_toggle_text(self) -> None:
-        self.action_toggle.setText("隐藏悬浮窗" if self._hud.isVisible() else "显示悬浮窗")
-
     def show(self) -> None:
         self.tray.show()
 
@@ -110,16 +116,17 @@ class QuotaTray(QObject):
         self.tray.setIcon(make_dot_icon(threshold_color(rem)))
 
         lines = summary_lines(state)
-        tip = "Codex 额度 · " + " · ".join(lines)
+        tip = tr("Codex 额度") + " · " + " · ".join(lines)
         if state.stale:
             fresh = StateStore.freshness_text(state.fetched_at)
-            tip += f"（数据陈旧，更新于 {fresh}）"
+            tip += tr("（数据陈旧，更新于 {f}）").format(f=fresh)
         self.tray.setToolTip(tip)
         self._rebuild_summary(lines)
 
     def _rebuild_summary(self, lines: list[str]) -> None:
         for a in self._summary_actions:
             self._menu.removeAction(a)
+            a.deleteLater()  # removeAction 不释放对象，防累积
         self._summary_actions = []
         for line in lines:  # 依次插到锚点前，保持传入顺序
             item = QAction(line, self)
@@ -129,6 +136,10 @@ class QuotaTray(QObject):
 
     # ---------- 交互 ----------
 
+    def _sync_toggle_text(self) -> None:
+        self.action_toggle.setText(tr("隐藏悬浮窗") if self._hud.isVisible()
+                                   else tr("显示悬浮窗"))
+
     def _toggle_hud(self) -> None:
         if self._hud.isVisible():
             self._hud.hide()
@@ -136,6 +147,12 @@ class QuotaTray(QObject):
             self._hud.show()
             self._hud.raise_()
         self._sync_toggle_text()
+
+    def _toggle_autostart(self, checked: bool) -> None:
+        if checked:
+            autostart.enable()
+        else:
+            autostart.disable()
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

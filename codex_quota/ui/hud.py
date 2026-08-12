@@ -6,7 +6,9 @@
     附加限额桶（如 Spark）带分隔标题
     底部：数据新鲜度（更新于 x 前 / 陈旧标记 / 错误提示）
 
-刷新：QTimer 每 60s 触发 QuotaFetcher（QThread）；底部倒计时每 30s 重排文本。
+交互：左键拖动；滚轮调透明度（0.3–1.0，持久化）；双击切换紧凑模式
+（只保留主限额行）；位置记忆。刷新：QTimer 按 RefreshScheduler 调度；
+底部倒计时每 30s 重排文本。
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ import time
 from typing import Optional
 
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QMouseEvent, QPainter
+from PyQt6.QtGui import QColor, QMouseEvent, QPainter, QWheelEvent
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -29,11 +31,15 @@ from PyQt6.QtWidgets import (
 from ..app_server import QuotaSnapshot, QuotaWindow
 from ..cli import error_hint
 from ..fetcher import QuotaFetcher, RefreshScheduler
+from ..i18n import tr
+from ..settings import Settings
 from ..state import StateStore, ViewState
 from .widgets import QuotaBar, threshold_color
 
 REFRESH_INTERVAL_MS = 60_000   # 活跃期自动刷新
 TICK_INTERVAL_MS = 30_000      # 倒计时/新鲜度文本重排
+OPACITY_STEP = 0.05
+OPACITY_MIN = 0.3
 
 BG = QColor(13, 17, 23, 230)   # 半透明深色底
 FG = "#e6edf3"
@@ -43,19 +49,19 @@ FG_DIM = "#8b949e"
 def _countdown_text(w: QuotaWindow, now_ts: float) -> str:
     secs = w.reset_in_seconds(now_ts)
     if secs is None:
-        return "重置时间未知"
+        return tr("重置时间未知")
     if secs <= 0:
-        return "即将重置"
+        return tr("即将重置")
     total = int(secs)
     days, rem = divmod(total, 86400)
     hours, rem = divmod(rem, 3600)
     mins = rem // 60
     if days:
-        text = f"{days} 天 {hours} 小时后重置"
+        text = tr("{d} 天 {h} 小时后重置").format(d=days, h=hours)
     elif hours:
-        text = f"{hours} 小时 {mins} 分后重置"
+        text = tr("{h} 小时 {m} 分后重置").format(h=hours, m=mins)
     else:
-        text = f"{mins} 分后重置"
+        text = tr("{m} 分后重置").format(m=mins)
     if w.reset_at is not None:
         t = dt.datetime.fromtimestamp(w.reset_at).astimezone()
         text += f"（{t:%m-%d %H:%M}）"
@@ -88,7 +94,7 @@ class _WindowRow(QFrame):
         lay.addLayout(top)
         lay.addWidget(self.countdown)
 
-    def bind(self, w: QuotaWindow, now_ts: float) -> None:
+    def bind(self, w: QuotaWindow, now_ts: float, show_countdown: bool = True) -> None:
         rem = w.remaining_percent
         self.label.setText(w.label)
         self.bar.set_remaining(rem)
@@ -96,9 +102,10 @@ class _WindowRow(QFrame):
             self.pct.setText("?")
             self.pct.setStyleSheet(f"color: {FG_DIM};")
         else:
-            self.pct.setText(f"剩 {rem:.0f}%")
+            self.pct.setText(tr("剩 {p}%").format(p=f"{rem:.0f}"))
             self.pct.setStyleSheet(f"color: {threshold_color(rem).name()};")
-        self.countdown.setText(_countdown_text(w, now_ts))
+        self.countdown.setText(_countdown_text(w, now_ts) if show_countdown else "")
+        self.countdown.setVisible(show_countdown)
 
 
 class FloatingHud(QWidget):
@@ -117,9 +124,13 @@ class FloatingHud(QWidget):
 
         self._store = StateStore()
         self._scheduler = RefreshScheduler()
+        self._settings = Settings()
         self._fetcher: Optional[QuotaFetcher] = None
         self._drag_pos: Optional[QPoint] = None
-        self._rows: list[tuple[QWidget, object]] = []  # (row_widget, QuotaWindow) 供 tick 重排
+        self._rows: list[tuple[_WindowRow, QuotaWindow]] = []  # 供 tick 重排
+        self._compact: bool = bool(self._settings.get("compact"))
+
+        self.setWindowOpacity(float(self._settings.get("opacity")))
 
         self._build_ui()
 
@@ -143,11 +154,11 @@ class FloatingHud(QWidget):
     # ---------- UI 搭建 ----------
 
     def _build_ui(self) -> None:
-        self._title = QLabel("⚡ Codex 额度")
+        self._title = QLabel(tr("⚡ Codex 额度"))
         self._title.setStyleSheet(f"color: {FG}; font-weight: bold;")
         self._refresh_btn = QToolButton()
         self._refresh_btn.setText("⟳")
-        self._refresh_btn.setToolTip("立即刷新")
+        self._refresh_btn.setToolTip(tr("立即刷新"))
         self._refresh_btn.setStyleSheet(f"color: {FG}; border: none; font-size: 14px;")
         self._refresh_btn.clicked.connect(self.refresh)
         self._close_btn = QToolButton()
@@ -166,7 +177,7 @@ class FloatingHud(QWidget):
         self._content.setContentsMargins(0, 0, 0, 0)
         self._content.setSpacing(2)
 
-        self._footer = QLabel("加载中…")
+        self._footer = QLabel(tr("加载中…"))
         self._footer.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
 
         root = QVBoxLayout(self)
@@ -195,6 +206,7 @@ class FloatingHud(QWidget):
         self._fetcher.succeeded.connect(self._on_success)
         self._fetcher.failed.connect(self._on_error)
         self._fetcher.finished.connect(self._on_fetch_done)
+        self._fetcher.finished.connect(self._fetcher.deleteLater)  # 防线程对象累积
         self._fetcher.start()
 
     def _on_fetch_done(self) -> None:
@@ -216,7 +228,7 @@ class FloatingHud(QWidget):
 
         if snap is None:
             hint = error_hint(state.error or "")
-            text = f"⚠ {state.error or '无数据'}"
+            text = f"⚠ {state.error or tr('无数据')}"
             if hint:
                 text += f"\n💡 {hint}"
             body = QLabel(text)
@@ -225,25 +237,26 @@ class FloatingHud(QWidget):
             self._content.addWidget(body)
         else:
             plan = f" · {snap.plan_type}" if snap.plan_type else ""
-            self._title.setText(f"⚡ Codex 额度{plan}")
+            self._title.setText(tr("⚡ Codex 额度") + plan)
             main = snap.primary_limit
             if main is not None:
                 self._add_window_row(main.primary, now_ts)
-                if main.secondary is not None:
+                if main.secondary is not None and not self._compact:
                     self._add_window_row(main.secondary, now_ts)
-                if main.credits is not None and main.credits.has_credits:
+                if main.credits is not None and main.credits.has_credits and not self._compact:
                     c = main.credits
-                    balance = "无限" if c.unlimited else (c.balance or "?")
-                    lbl = QLabel(f"信用额度余额: {balance}")
+                    balance = tr("无限") if c.unlimited else (c.balance or "?")
+                    lbl = QLabel(tr("信用额度余额: {b}").format(b=balance))
                     lbl.setStyleSheet(f"color: {FG_DIM};")
                     self._content.addWidget(lbl)
-            for extra in snap.limits[1:]:
-                sep = QLabel(f"── {extra.limit_name or extra.limit_id} ──")
-                sep.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
-                self._content.addWidget(sep)
-                self._add_window_row(extra.primary, now_ts)
-                if extra.secondary is not None:
-                    self._add_window_row(extra.secondary, now_ts)
+            if not self._compact:
+                for extra in snap.limits[1:]:
+                    sep = QLabel(f"── {extra.limit_name or extra.limit_id} ──")
+                    sep.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+                    self._content.addWidget(sep)
+                    self._add_window_row(extra.primary, now_ts)
+                    if extra.secondary is not None:
+                        self._add_window_row(extra.secondary, now_ts)
 
         self._update_footer(state)
         self.adjustSize()
@@ -251,7 +264,7 @@ class FloatingHud(QWidget):
 
     def _add_window_row(self, w: QuotaWindow, now_ts: float) -> None:
         row = _WindowRow()
-        row.bind(w, now_ts)
+        row.bind(w, now_ts, show_countdown=not self._compact)
         self._rows.append((row, w))
         self._content.addWidget(row)
 
@@ -259,11 +272,11 @@ class FloatingHud(QWidget):
         state = state or self._store.state
         fresh = StateStore.freshness_text(state.fetched_at)
         if state.stale:
-            text = f"⚠ 数据陈旧（更新于 {fresh}）：{state.error}"
+            text = tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(f=fresh, e=state.error)
         elif state.error:
             text = f"⚠ {state.error}"
         else:
-            text = f"更新于 {fresh}"
+            text = tr("更新于 {f}").format(f=fresh)
         self._footer.setText(text)
 
     def _retick(self) -> None:
@@ -287,7 +300,15 @@ class FloatingHud(QWidget):
     def hideEvent(self, event) -> None:  # noqa: N802
         self._scheduler.set_visible(False)
         self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        self._settings.set("pos", [self.x(), self.y()])
         super().hideEvent(event)
+
+    def restore_position(self) -> None:
+        """启动时恢复上次位置（show 之前调用）。"""
+        pos = self._settings.get("pos")
+        if (isinstance(pos, list) and len(pos) == 2
+                and all(isinstance(v, int) for v in pos)):
+            self.move(pos[0], pos[1])
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
@@ -309,4 +330,27 @@ class FloatingHud(QWidget):
             e.accept()
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        if self._drag_pos is not None:
+            self._settings.set("pos", [self.x(), self.y()])  # 拖动结束即记忆位置
         self._drag_pos = None
+
+    def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:  # noqa: N802
+        self.set_compact(not self._compact)
+
+    def wheelEvent(self, e: QWheelEvent) -> None:  # noqa: N802
+        steps = e.angleDelta().y() / 120
+        self.set_opacity(self.windowOpacity() + steps * OPACITY_STEP)
+
+    # ---------- M5：透明度 / 紧凑模式 ----------
+
+    def set_opacity(self, value: float) -> None:
+        value = max(OPACITY_MIN, min(1.0, value))
+        self.setWindowOpacity(value)
+        self._settings.set("opacity", value)
+
+    def set_compact(self, compact: bool) -> None:
+        if compact == self._compact:
+            return
+        self._compact = compact
+        self._settings.set("compact", compact)
+        self._apply(self._store.state)  # 用当前状态重建内容区

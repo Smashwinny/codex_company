@@ -145,6 +145,45 @@ class TestInteractions:
         QTest.mouseClick(live_hud._close_btn, Qt.MouseButton.LeftButton)
         assert not live_hud.isVisible()
 
+    def test_compact_toggle(self, live_hud):
+        assert len(live_hud._rows) == 2  # 主行 + Spark
+        live_hud.set_compact(True)
+        assert len(live_hud._rows) == 1          # 附加桶隐藏
+        assert live_hud._rows[0][0].countdown.isHidden()  # 倒计时也收起
+        live_hud.set_compact(False)
+        assert len(live_hud._rows) == 2
+        assert not live_hud._rows[0][0].countdown.isHidden()
+
+    def test_compact_persists(self, live_hud):
+        live_hud.set_compact(True)
+        assert live_hud._settings.get("compact") is True
+
+    def test_double_click_toggles_compact(self, live_hud):
+        live_hud.mouseDoubleClickEvent(None)
+        assert live_hud._compact is True
+        live_hud.mouseDoubleClickEvent(None)
+        assert live_hud._compact is False
+
+    def test_opacity_clamps_and_persists(self, live_hud):
+        # Qt 内部按 8bit 存储透明度，断言用 abs=0.01 容差
+        live_hud.set_opacity(0.1)
+        assert live_hud.windowOpacity() == pytest.approx(0.3, abs=0.01)   # 下限
+        live_hud.set_opacity(1.5)
+        assert live_hud.windowOpacity() == pytest.approx(1.0, abs=0.01)   # 上限
+        live_hud.set_opacity(0.75)
+        assert live_hud._settings.get("opacity") == pytest.approx(0.75)
+
+    def test_restore_position(self, live_hud):
+        live_hud._settings.set("pos", [123, 456])
+        live_hud.restore_position()
+        assert (live_hud.x(), live_hud.y()) == (123, 456)
+
+    def test_restore_position_ignores_junk(self, live_hud):
+        live_hud.move(50, 60)
+        live_hud._settings.set("pos", "not-a-pos")
+        live_hud.restore_position()
+        assert (live_hud.x(), live_hud.y()) == (50, 60)
+
 
 class TestCountdownText:
     def test_formats(self, snap=None):

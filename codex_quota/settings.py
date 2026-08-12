@@ -1,0 +1,55 @@
+"""轻量设置持久化：~/.config/codex-quota/settings.json（XDG_CONFIG_HOME 优先）。
+
+仅存 UI 偏好（透明度、紧凑模式、窗口位置），损坏时回退默认值。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import tempfile
+from typing import Any, Optional
+
+
+def default_settings_path() -> str:
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
+    return os.path.join(base, "codex-quota", "settings.json")
+
+
+DEFAULTS: dict[str, Any] = {
+    "opacity": 1.0,        # 窗口透明度 0.3–1.0
+    "compact": False,      # 紧凑模式：只显示主限额行
+    "pos": None,           # 窗口位置记忆 [x, y]
+}
+
+
+class Settings:
+    def __init__(self, path: Optional[str] = None) -> None:
+        self._path = path or default_settings_path()
+        self._data: dict[str, Any] = dict(DEFAULTS)
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if isinstance(raw, dict):
+                for key in DEFAULTS:
+                    if key in raw:
+                        self._data[key] = raw[key]
+        except (OSError, ValueError):
+            pass  # 文件不存在或损坏 → 默认值
+
+    def get(self, key: str) -> Any:
+        return self._data.get(key, DEFAULTS.get(key))
+
+    def set(self, key: str, value: Any) -> None:
+        self._data[key] = value
+        self._save()
+
+    def _save(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._path), exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self._path), suffix=".tmp")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(self._data, f)
+            os.replace(tmp, self._path)
+        except OSError:
+            pass  # 设置写不进去只是丢偏好，不影响功能

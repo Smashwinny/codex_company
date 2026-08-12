@@ -49,15 +49,17 @@ class QuotaWindow:
 
     @property
     def label(self) -> str:
-        """按 windowDurationMins 归一化窗口名称。"""
+        """按 windowDurationMins 归一化窗口名称（随 i18n 语言输出）。"""
+        from .i18n import tr
+
         m = self.window_minutes
         if m is None:
-            return "窗口"
+            return tr("窗口")
         if m <= 360:
-            return "5小时"
+            return tr("5小时")
         if m >= 5000:
-            return "本周"
-        return f"{m / 60:.0f}小时"
+            return tr("本周")
+        return tr("{h}小时").format(h=f"{m / 60:.0f}")
 
     def reset_in_seconds(self, now: Optional[float] = None) -> Optional[float]:
         if self.reset_at is None:
