@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
 from .. import autostart
 from ..i18n import tr
-from ..state import StateStore, ViewState
+from ..state import ProviderView, StateStore
 from .widgets import COLOR_UNKNOWN, threshold_color
 
 ICON_SIZE = 64  # 绘制大尺寸让系统自行缩放，保证 HiDPI 清晰
@@ -35,35 +35,40 @@ def make_dot_icon(color: QColor, size: int = ICON_SIZE) -> QIcon:
     return QIcon(pm)
 
 
-def worst_remaining(state: ViewState) -> Optional[float]:
-    """所有窗口中的最低剩余量；无数据返回 None。"""
-    snap = state.snapshot
-    if snap is None:
-        return None
+def worst_remaining(views: list[ProviderView]) -> Optional[float]:
+    """所有 provider 所有窗口中的最低剩余量；无数据返回 None。"""
     values = []
-    for limit in snap.limits:
-        for w in (limit.primary, limit.secondary):
-            if w is not None and w.remaining_percent is not None:
-                values.append(w.remaining_percent)
+    for v in views:
+        snap = v.state.snapshot
+        if snap is None:
+            continue
+        for limit in snap.limits:
+            for w in (limit.primary, limit.secondary):
+                if w is not None and w.remaining_percent is not None:
+                    values.append(w.remaining_percent)
     return min(values) if values else None
 
 
-def summary_lines(state: ViewState) -> list[str]:
-    """菜单/提示中的额度摘要行。"""
-    snap = state.snapshot
-    if snap is None:
-        return [tr("无数据")]
+def summary_lines(views: list[ProviderView]) -> list[str]:
+    """菜单/提示中的额度摘要行（按 provider 分组带前缀）。"""
     lines: list[str] = []
-    for limit in snap.limits:
-        prefix = "" if limit is snap.primary_limit else f"{limit.limit_name or limit.limit_id} · "
-        for w in (limit.primary, limit.secondary):
-            if w is None:
-                continue
-            rem = w.remaining_percent
-            if rem is not None:
-                lines.append(f"{prefix}{w.label} " + tr("剩 {p}%").format(p=f"{rem:.0f}"))
-            else:
-                lines.append(f"{prefix}{w.label} " + tr("未知"))
+    for v in views:
+        snap = v.state.snapshot
+        if snap is None:
+            lines.append(f"{v.display_name} · " + tr("无数据"))
+            continue
+        for limit in snap.limits:
+            prefix = f"{v.display_name}"
+            if limit is not snap.primary_limit:
+                prefix += f" {limit.limit_name or limit.limit_id}"
+            for w in (limit.primary, limit.secondary):
+                if w is None:
+                    continue
+                rem = w.remaining_percent
+                if rem is not None:
+                    lines.append(f"{prefix} · {w.label} " + tr("剩 {p}%").format(p=f"{rem:.0f}"))
+                else:
+                    lines.append(f"{prefix} · {w.label} " + tr("未知"))
     return lines or [tr("无数据")]
 
 
@@ -103,7 +108,7 @@ class QuotaTray(QObject):
 
         self.tray.activated.connect(self._on_activated)
         hud.state_changed.connect(self.update_state)
-        self.update_state(hud._store.state)
+        self.update_state(hud._current_views())
         self._sync_toggle_text()
 
     def show(self) -> None:
@@ -111,14 +116,15 @@ class QuotaTray(QObject):
 
     # ---------- 状态更新 ----------
 
-    def update_state(self, state: ViewState) -> None:
-        rem = worst_remaining(state)
+    def update_state(self, views: list[ProviderView]) -> None:
+        rem = worst_remaining(views)
         self.tray.setIcon(make_dot_icon(threshold_color(rem)))
 
-        lines = summary_lines(state)
-        tip = tr("Codex 额度") + " · " + " · ".join(lines)
-        if state.stale:
-            fresh = StateStore.freshness_text(state.fetched_at)
+        lines = summary_lines(views)
+        tip = tr("⚡ 额度监控") + "\n" + "\n".join(lines)
+        stale = next((v for v in views if v.state.stale), None)
+        if stale is not None:
+            fresh = StateStore.freshness_text(stale.state.fetched_at)
             tip += tr("（数据陈旧，更新于 {f}）").format(f=fresh)
         self.tray.setToolTip(tip)
         self._rebuild_summary(lines)

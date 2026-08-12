@@ -1,7 +1,7 @@
-"""HUD 冒烟测试：offscreen 平台下实例化、应用快照、错误降级。
+"""HUD 冒烟测试：offscreen 平台下实例化、应用快照、错误降级、多 provider 分区。
 
 运行方式：QT_QPA_PLATFORM=offscreen pytest tests/test_hud.py
-（pytest.ini 中已设置该环境变量）
+（conftest.py 中已设置该环境变量）
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from codex_quota.app_server import parse_rate_limits_response
 from codex_quota.state import StateStore
 from codex_quota.ui.hud import FloatingHud, _countdown_text
 from codex_quota.ui.widgets import QuotaBar, threshold_color
+from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
 
 
@@ -27,49 +28,78 @@ def qapp():
     yield app
 
 
+def snap():
+    return codex_snapshot()
+
+
 @pytest.fixture
 def hud(qapp, monkeypatch):
     # 冒烟测试不触发真实取数：把 refresh 替换为 no-op
     monkeypatch.setattr(FloatingHud, "refresh", lambda self: None)
-    w = FloatingHud()
+    w = FloatingHud(providers=[FakeProvider("codex", "Codex")])
     yield w
     w.close()
     w.deleteLater()
 
 
-def snap():
-    return parse_rate_limits_response(REAL_RESPONSE, now=NOW)
-
-
 class TestHudSmoke:
     def test_initial_state(self, hud):
-        assert "Codex" in hud._title.text()
+        assert "额度监控" in hud._title.text()
 
     def test_apply_snapshot(self, hud):
-        hud._apply(hud._store.on_success(snap()))
-        assert "prolite" in hud._title.text()
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
+        header_texts = [h.text() for h in hud._section_headers]
+        assert any("Codex" in t and "prolite" in t for t in header_texts)
         # 主窗口一行 + Spark 一行
         assert len(hud._rows) == 2
-        assert "剩 9%" in hud._rows[0][0].pct.text()  # 已用 91% → 剩余 9%
+        assert "剩 9%" in hud._rows[0][0].pct.text()
         assert "更新于" in hud._footer.text()
 
     def test_error_without_history(self, hud):
-        hud._apply(hud._store.on_error("app-server 响应超时（8 秒）"))
+        hud._stores["codex"].on_error("app-server 响应超时（8 秒）")
+        hud._apply()
         assert "超时" in hud._footer.text()
 
     def test_error_with_history_marks_stale(self, hud):
-        hud._store.on_success(snap())
-        hud._apply(hud._store.on_error("no-response"))
+        hud._stores["codex"].on_success(snap())
+        hud._stores["codex"].on_error("no-response")
+        hud._apply()
         assert "数据陈旧" in hud._footer.text()
         assert len(hud._rows) == 2  # 旧数据仍在
 
     def test_retick_updates_countdown(self, hud):
-        hud._apply(hud._store.on_success(snap()))
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
         before = hud._rows[0][0].countdown.text()
         hud._retick()
         # 文本结构不变（同一时刻），至少不崩且仍是倒计时格式
         assert "重置" in before
         assert "重置" in hud._rows[0][0].countdown.text()
+
+    def test_multi_provider_sections(self, hud, tmp_path):
+        kimi_snap = snap()
+        kimi_snap.provider = "kimi"
+        kimi_snap.plan_type = "kimi-code/k3"
+        hud._providers.append(FakeProvider("kimi", "Kimi"))
+        hud._stores["kimi"] = StateStore(cache_path=str(tmp_path / "kimi.json"))
+        hud._stores["codex"].on_success(snap())
+        hud._stores["kimi"].on_success(kimi_snap)
+        hud._apply()
+        header_texts = [h.text() for h in hud._section_headers]
+        assert any("Codex" in t for t in header_texts)
+        assert any("Kimi" in t and "k3" in t for t in header_texts)
+        assert len(hud._rows) == 4  # 每个 provider 两行
+
+    def test_one_provider_failure_isolated(self, hud, tmp_path):
+        hud._providers.append(FakeProvider("kimi", "Kimi"))
+        hud._stores["kimi"] = StateStore(cache_path=str(tmp_path / "kimi.json"))
+        hud._stores["codex"].on_success(snap())
+        hud._stores["kimi"].on_error("kimi web 启动超时")
+        hud._apply()
+        assert len(hud._rows) == 2  # codex 分区正常
+        header_texts = [h.text() for h in hud._section_headers]
+        assert any("Kimi" in t for t in header_texts)  # kimi 分区仍在（显示错误）
 
 
 class TestWidgets:
@@ -97,21 +127,20 @@ class TestWidgets:
 
 
 class _FakeFetcher(QObject):
-    """同步发信号的假取数线程：start() 立即 emit 成功。"""
+    """同步发信号的假取数线程：start() 立即对每个 provider emit 成功。"""
 
-    succeeded = pyqtSignal(object)
-    failed = pyqtSignal(str)
+    succeeded = pyqtSignal(str, object)
+    failed = pyqtSignal(str, str)
     finished = pyqtSignal()
 
-    def __init__(self, snapshot, parent=None):
+    def __init__(self, providers, timeout=8.0, parent=None):
         super().__init__(parent)
-        self._snapshot = snapshot
-
-    def isRunning(self):
-        return False
+        self._providers = providers
 
     def start(self):
-        self.succeeded.emit(self._snapshot)
+        for p in self._providers:
+            s = p.fetch()
+            self.succeeded.emit(p.name, s)
         self.finished.emit()
 
 
@@ -120,11 +149,8 @@ class TestInteractions:
 
     @pytest.fixture
     def live_hud(self, qapp, monkeypatch):
-        monkeypatch.setattr(
-            "codex_quota.ui.hud.QuotaFetcher",
-            lambda parent=None: _FakeFetcher(snap(), parent),
-        )
-        w = FloatingHud()
+        monkeypatch.setattr("codex_quota.ui.hud.QuotaFetcher", _FakeFetcher)
+        w = FloatingHud(providers=[FakeProvider("codex", "Codex", snapshot=snap())])
         yield w
         w.close()
         w.deleteLater()

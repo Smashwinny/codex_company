@@ -15,27 +15,25 @@ from typing import Optional
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .app_server import AppServerClient, AppServerError, QuotaSnapshot, codex_home
+from .app_server import codex_home
 
 
 class QuotaFetcher(QThread):
-    succeeded = pyqtSignal(object)  # QuotaSnapshot
-    failed = pyqtSignal(str)
+    succeeded = pyqtSignal(str, object)  # provider name, QuotaSnapshot
+    failed = pyqtSignal(str, str)        # provider name, error message
 
-    def __init__(self, timeout: float = 8.0, parent=None):
+    def __init__(self, providers, timeout: float = 8.0, parent=None):
         super().__init__(parent)
+        self._providers = providers
         self._timeout = timeout
 
     def run(self) -> None:
-        try:
-            snap: QuotaSnapshot = AppServerClient(timeout=self._timeout).read_rate_limits()
-        except AppServerError as exc:
-            self.failed.emit(str(exc))
-            return
-        except Exception as exc:  # 兜底：任何意外都不能让线程裸崩
-            self.failed.emit(f"未知错误: {exc}")
-            return
-        self.succeeded.emit(snap)
+        # 顺序查询各 provider；单个失败不影响其他
+        for p in self._providers:
+            try:
+                self.succeeded.emit(p.name, p.fetch())
+            except Exception as exc:  # 兜底：任何意外都不能让线程裸崩
+                self.failed.emit(p.name, str(exc))
 
 
 ACTIVE_MS = 60_000        # 窗口可见

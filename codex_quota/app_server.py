@@ -86,11 +86,12 @@ class RateLimit:
 
 @dataclass
 class QuotaSnapshot:
-    """一次查询的完整结果。fetched_at 为本地 Unix 秒。"""
+    """一次查询的完整结果。fetched_at 为本地 Unix 秒。provider 标识数据源。"""
 
     fetched_at: float
     plan_type: Optional[str]
     limits: list[RateLimit]  # 主限额在前，附加限额桶（如 Spark）在后
+    provider: str = "codex"
 
     @property
     def primary_limit(self) -> Optional[RateLimit]:
@@ -200,6 +201,7 @@ def snapshot_from_dict(d: dict[str, Any]) -> QuotaSnapshot:
         fetched_at=float(d.get("fetched_at") or 0),
         plan_type=d.get("plan_type"),
         limits=limits,
+        provider=d.get("provider") or "codex",  # 旧缓存无此字段 → codex
     )
 
 

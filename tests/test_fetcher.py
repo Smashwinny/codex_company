@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import time
 
+import pytest
+
 from codex_quota.fetcher import (
     ACTIVE_MS,
     BACKOFF_MAX_MS,
@@ -13,6 +15,7 @@ from codex_quota.fetcher import (
     RefreshScheduler,
     codex_session_active,
 )
+from tests.conftest import FakeProvider, codex_snapshot
 
 
 class TestScheduler:
@@ -77,3 +80,41 @@ class TestSessionActive:
         os.utime(f, (old, old))
         monkeypatch.setenv("CODEX_HOME", str(tmp_path))
         assert codex_session_active() is False
+
+
+class TestMultiProviderFetch:
+    """QuotaFetcher 聚合：单 provider 失败不影响其他。"""
+
+    def test_partial_failure(self, qapp):
+        pytest.importorskip("PyQt6")
+        from codex_quota.fetcher import QuotaFetcher
+
+        providers = [
+            FakeProvider("codex", "Codex", snapshot=codex_snapshot()),
+            FakeProvider("kimi", "Kimi", error="kimi web 启动超时"),
+        ]
+        fetcher = QuotaFetcher(providers)
+        ok, bad = [], []
+        fetcher.succeeded.connect(lambda name, s: ok.append(name))
+        fetcher.failed.connect(lambda name, e: bad.append((name, e)))
+        fetcher.run()  # 直接同步调用 run，不起线程
+        assert ok == ["codex"]
+        assert bad == [("kimi", "kimi web 启动超时")]
+
+    def test_all_fail_no_crash(self, qapp):
+        pytest.importorskip("PyQt6")
+        from codex_quota.fetcher import QuotaFetcher
+
+        fetcher = QuotaFetcher([FakeProvider("codex", error="x")])
+        bad = []
+        fetcher.failed.connect(lambda name, e: bad.append(name))
+        fetcher.run()
+        assert bad == ["codex"]
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    pytest.importorskip("PyQt6")
+    from PyQt6.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])

@@ -35,7 +35,7 @@ class TestRenderText:
         empty = parse_rate_limits_response(
             {"rateLimits": {"limitId": "codex", "primary": {}}}, now=NOW)
         empty.limits.clear()
-        assert render_text(empty) == "Codex 额度：无数据"
+        assert render_text(empty) == "Codex：无数据"
 
 
 class TestHelpers:

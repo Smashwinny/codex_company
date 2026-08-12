@@ -29,11 +29,13 @@ def _run_hud(args: list[str]) -> int:
         )
         return 69  # EX_UNAVAILABLE
 
+    from .providers import default_providers
     from .ui import FloatingHud
 
     app = QApplication([sys.argv[0], *args])
     app.setApplicationName("codex-quota")
-    hud = FloatingHud()
+    providers = default_providers()
+    hud = FloatingHud(providers)
     hud.restore_position()
 
     if QSystemTrayIcon.isSystemTrayAvailable():
@@ -48,7 +50,11 @@ def _run_hud(args: list[str]) -> int:
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
     hud.show()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        for p in providers:
+            p.close()  # 释放 kimi web 等保活进程
 
 
 if __name__ == "__main__":

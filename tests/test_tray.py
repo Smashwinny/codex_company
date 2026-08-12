@@ -9,15 +9,14 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication
 
-from codex_quota.app_server import parse_rate_limits_response
-from codex_quota.state import StateStore, ViewState
+from codex_quota.state import ProviderView, ViewState
 from codex_quota.ui.tray import (
     QuotaTray,
     make_dot_icon,
     summary_lines,
     worst_remaining,
 )
-from codex_quota.ui.widgets import COLOR_UNKNOWN
+from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
 
 
@@ -28,7 +27,11 @@ def qapp():
 
 
 def snap():
-    return parse_rate_limits_response(REAL_RESPONSE, now=NOW)
+    return codex_snapshot()
+
+
+def view(state: ViewState, name="codex", display="Codex") -> ProviderView:
+    return ProviderView(name=name, display_name=display, state=state)
 
 
 class TestDotIcon:
@@ -45,28 +48,42 @@ class TestDotIcon:
 
 
 class TestWorstRemaining:
-    def test_picks_minimum(self):
-        state = ViewState(snapshot=snap())
-        # 主桶剩 9%，Spark 剩 98% → 最坏是 9%
-        assert worst_remaining(state) == pytest.approx(9.0)
+    def test_picks_minimum_across_providers(self):
+        # codex 主桶剩 9%（Spark 98%）+ kimi 剩 50% → 最坏 9%
+        kimi_snap = snap()
+        kimi_snap.provider = "kimi"
+        kimi_snap.primary_limit.primary.used_percent = 50
+        views = [view(ViewState(snapshot=snap())),
+                 view(ViewState(snapshot=kimi_snap), "kimi", "Kimi")]
+        assert worst_remaining(views) == pytest.approx(9.0)
 
     def test_no_data(self):
-        assert worst_remaining(ViewState()) is None
+        assert worst_remaining([view(ViewState())]) is None
 
     def test_all_unknown(self):
         s = snap()
         for limit in s.limits:
             limit.primary.used_percent = None
-        assert worst_remaining(ViewState(snapshot=s)) is None
+        assert worst_remaining([view(ViewState(snapshot=s))]) is None
 
 
 class TestSummaryLines:
     def test_lines(self):
-        lines = summary_lines(ViewState(snapshot=snap()))
-        assert lines == ["本周 剩 9%", "GPT-5.3-Codex-Spark · 本周 剩 98%"]
+        lines = summary_lines([view(ViewState(snapshot=snap()))])
+        assert lines == ["Codex · 本周 剩 9%",
+                         "Codex GPT-5.3-Codex-Spark · 本周 剩 98%"]
+
+    def test_multi_provider(self):
+        kimi_snap = snap()
+        kimi_snap.provider = "kimi"
+        kimi_snap.limits = [kimi_snap.limits[0]]  # kimi 无附加桶
+        views = [view(ViewState(snapshot=snap())),
+                 view(ViewState(snapshot=kimi_snap), "kimi", "Kimi")]
+        lines = summary_lines(views)
+        assert lines[-1].startswith("Kimi · ")
 
     def test_no_data(self):
-        assert summary_lines(ViewState()) == ["无数据"]
+        assert summary_lines([view(ViewState())]) == ["Codex · 无数据"]
 
 
 class TestQuotaTray:
@@ -76,7 +93,7 @@ class TestQuotaTray:
         from codex_quota.ui.hud import FloatingHud
 
         monkeypatch.setattr(FloatingHud, "refresh", lambda self: None)
-        hud = FloatingHud()
+        hud = FloatingHud(providers=[FakeProvider("codex", "Codex")])
         t = QuotaTray(hud, qapp)
         yield t, hud
         hud.close()
@@ -90,33 +107,25 @@ class TestQuotaTray:
         assert texts[2] == "开机自启"
         assert texts[-1] == "退出"
         # 初始无数据 → 摘要一行
-        assert "无数据" in texts
+        assert any("无数据" in x for x in texts)
 
     def test_update_state_rebuilds_summary(self, tray):
         t, hud = tray
-        hud._apply(hud._store.on_success(snap()))
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
         # 校验真实菜单顺序（含分隔符过滤后）
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
         assert texts == ["显示悬浮窗", "立即刷新", "开机自启",
-                         "本周 剩 9%", "GPT-5.3-Codex-Spark · 本周 剩 98%",
+                         "Codex · 本周 剩 9%", "Codex GPT-5.3-Codex-Spark · 本周 剩 98%",
                          "退出"]
         assert all(not a.isEnabled() for a in t._summary_actions)
         assert "剩 9%" in t.tray.toolTip()
 
-    def test_autostart_toggle(self, tray):
-        from codex_quota import autostart
-
-        t, _hud = tray
-        assert autostart.is_enabled() is False
-        t.action_autostart.setChecked(True)
-        assert autostart.is_enabled() is True
-        t.action_autostart.setChecked(False)
-        assert autostart.is_enabled() is False
-
     def test_tooltip_marks_stale(self, tray):
         t, hud = tray
-        hud._store.on_success(snap())
-        hud._apply(hud._store.on_error("boom"))
+        hud._stores["codex"].on_success(snap())
+        hud._stores["codex"].on_error("boom")
+        hud._apply()
         assert "数据陈旧" in t.tray.toolTip()
 
     def test_toggle_hud(self, tray):
@@ -131,8 +140,19 @@ class TestQuotaTray:
 
     def test_icon_reflects_worst_remaining(self, tray):
         t, hud = tray
-        hud._apply(hud._store.on_success(snap()))
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
         img = t.tray.icon().pixmap(64, 64).toImage()
         center = img.pixelColor(32, 32)
         # 剩 9% ≤ 10 → 红色
         assert center.red() > 200 and center.green() < 100
+
+    def test_autostart_toggle(self, tray):
+        from codex_quota import autostart
+
+        t, _hud = tray
+        assert autostart.is_enabled() is False
+        t.action_autostart.setChecked(True)
+        assert autostart.is_enabled() is True
+        t.action_autostart.setChecked(False)
+        assert autostart.is_enabled() is False

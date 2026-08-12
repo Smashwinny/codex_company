@@ -19,9 +19,11 @@ from .app_server import QuotaSnapshot, snapshot_from_dict, snapshot_to_dict
 CACHE_MAX_AGE_S = 24 * 3600  # 超过 24 小时的缓存视为无效
 
 
-def default_cache_path() -> str:
+def default_cache_path(provider: str = "codex") -> str:
+    """每个 provider 一个缓存文件；codex 沿用 last-good.json（向后兼容）。"""
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    return os.path.join(base, "codex-quota", "last-good.json")
+    filename = "last-good.json" if provider == "codex" else f"last-good-{provider}.json"
+    return os.path.join(base, "codex-quota", filename)
 
 
 @dataclass
@@ -36,6 +38,15 @@ class ViewState:
     @property
     def fetched_at(self) -> Optional[float]:
         return self.snapshot.fetched_at if self.snapshot else None
+
+
+@dataclass
+class ProviderView:
+    """一个 provider 的展示视图（托盘聚合用）。"""
+
+    name: str
+    display_name: str
+    state: ViewState
 
 
 class StateStore:

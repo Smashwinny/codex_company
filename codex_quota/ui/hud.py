@@ -1,14 +1,15 @@
 """FloatingHud：无边框、置顶、半透明、可拖动的悬浮窗。
 
-布局（对应 DESIGN.md §5）：
-    标题栏：⚡ Codex 额度 · 套餐      ⟳(刷新) ×(关闭)
-    每个限流窗口一行：标签 + 进度条+百分比 + 重置倒计时
-    附加限额桶（如 Spark）带分隔标题
-    底部：数据新鲜度（更新于 x 前 / 陈旧标记 / 错误提示）
+布局（对应 DESIGN.md §5 + M6 多 provider）：
+    标题栏：⚡ 额度监控  [模型徽章]      ⟳(刷新) ×(关闭)
+    每个 provider 一个分区：● Codex · prolite / ● Kimi · k3
+      分区内每个限流窗口一行：标签 + 进度条+百分比 + 重置倒计时
+      该 provider 查询失败时分区内联错误（不影响其他分区）
+    底部：整体新鲜度（最旧快照时间 / 陈旧标记）
 
 交互：左键拖动；滚轮调透明度（0.3–1.0，持久化）；双击切换紧凑模式
-（只保留主限额行）；位置记忆。刷新：QTimer 按 RefreshScheduler 调度；
-底部倒计时每 30s 重排文本。
+（每 provider 只留主限额行）；位置记忆。刷新：QTimer 按 RefreshScheduler
+调度；倒计时每 30s 重排文本。
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from ..fetcher import QuotaFetcher, RefreshScheduler
 from ..i18n import tr
 from ..model_info import ModelInfo, read_model_info
 from ..settings import Settings
-from ..state import StateStore, ViewState
+from ..state import ProviderView, StateStore, ViewState, default_cache_path
 from .widgets import QuotaBar, threshold_color
 
 REFRESH_INTERVAL_MS = 60_000   # 活跃期自动刷新
@@ -46,6 +47,9 @@ OPACITY_MIN = 0.3
 BG = QColor(13, 17, 23, 230)   # 半透明深色底
 FG = "#e6edf3"
 FG_DIM = "#8b949e"
+
+# provider 分区标识色
+PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7"}
 
 # 模型徽章：fast（Spark / fast tier）用实心橙 pill + ⚡；普通模型用灰描边 pill
 BADGE_FAST_STYLE = (
@@ -134,9 +138,9 @@ class _WindowRow(QFrame):
 
 
 class FloatingHud(QWidget):
-    state_changed = pyqtSignal(object)  # ViewState；托盘等跟随更新
+    state_changed = pyqtSignal(object)  # list[ProviderView]；托盘等跟随更新
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, providers=None, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.setWindowTitle("codex-quota")
         self.setWindowFlags(
@@ -145,24 +149,34 @@ class FloatingHud(QWidget):
             | Qt.WindowType.Tool  # 不出现在任务栏
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(300)
 
-        self._store = StateStore()
+        if providers is None:
+            from ..providers import default_providers
+
+            providers = default_providers()
+        self._providers = list(providers)
+        self._stores = {
+            p.name: StateStore(cache_path=default_cache_path(p.name))
+            for p in self._providers
+        }
         self._scheduler = RefreshScheduler()
         self._settings = Settings()
         self._fetcher: Optional[QuotaFetcher] = None
+        self._any_success = False
         self._drag_pos: Optional[QPoint] = None
         self._rows: list[tuple[_WindowRow, QuotaWindow]] = []  # 供 tick 重排
+        self._section_headers: list[QLabel] = []
         self._compact: bool = bool(self._settings.get("compact"))
 
         self.setWindowOpacity(float(self._settings.get("opacity")))
 
         self._build_ui()
 
-        # 启动即展示 24h 内的缓存（标陈旧），不阻塞等待首次查询
-        cached = self._store.load_cached()
-        if cached.snapshot is not None:
-            self._apply(cached)
+        # 启动即展示各 provider 24h 内的缓存（标陈旧），不阻塞等待首次查询
+        for store in self._stores.values():
+            store.load_cached()
+        self._apply()
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
@@ -179,7 +193,7 @@ class FloatingHud(QWidget):
     # ---------- UI 搭建 ----------
 
     def _build_ui(self) -> None:
-        self._title = QLabel(tr("⚡ Codex 额度"))
+        self._title = QLabel(tr("⚡ 额度监控"))
         self._title.setStyleSheet(f"color: {FG}; font-weight: bold;")
         self._model_badge = QLabel()
         self._model_badge.setTextFormat(Qt.TextFormat.RichText)
@@ -218,6 +232,7 @@ class FloatingHud(QWidget):
 
     def _clear_content(self) -> None:
         self._rows.clear()
+        self._section_headers.clear()
         while self._content.count():
             item = self._content.takeAt(0)
             w = item.widget()
@@ -229,9 +244,9 @@ class FloatingHud(QWidget):
     def refresh(self) -> None:
         if self._fetcher is not None:
             return  # 上一次查询还在进行，不叠加
-        self._store.begin_refresh()
+        self._any_success = False
         self._refresh_btn.setEnabled(False)
-        fetcher = QuotaFetcher(parent=self)
+        fetcher = QuotaFetcher(self._providers, parent=self)
         fetcher.succeeded.connect(self._on_success)
         fetcher.failed.connect(self._on_error)
         fetcher.finished.connect(self._on_fetch_done)
@@ -241,37 +256,50 @@ class FloatingHud(QWidget):
 
     def _on_fetch_done(self) -> None:
         self._refresh_btn.setEnabled(True)
+        if self._any_success:
+            self._scheduler.on_success()
+        else:
+            self._scheduler.on_failure()
         self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
         # fetcher 已 deleteLater，立刻清空引用——
-        # 否则下次 refresh 的 isRunning() 会访问已删除的 C++ 对象导致崩溃
+        # 否则下次 refresh 会访问已删除的 C++ 对象导致崩溃
         self._fetcher = None
 
-    def _on_success(self, snap: QuotaSnapshot) -> None:
-        self._scheduler.on_success()
-        self._apply(self._store.on_success(snap))
+    def _on_success(self, provider: str, snap: QuotaSnapshot) -> None:
+        self._any_success = True
+        self._stores[provider].on_success(snap)
+        self._apply()
 
-    def _on_error(self, message: str) -> None:
-        self._scheduler.on_failure()
-        self._apply(self._store.on_error(message))
+    def _on_error(self, provider: str, message: str) -> None:
+        self._stores[provider].on_error(message)
+        self._apply()
 
-    def _apply(self, state: ViewState) -> None:
+    def _current_views(self) -> list[ProviderView]:
+        return [
+            ProviderView(name=p.name, display_name=p.display_name,
+                         state=self._stores[p.name].state)
+            for p in self._providers
+        ]
+
+    def _apply(self) -> None:
         self._clear_content()
         self._update_model_badge()  # 每次刷新重读 config.toml，改模型即时生效
-        snap = state.snapshot
-        now_ts = snap.fetched_at if snap else dt.datetime.now().timestamp()
 
-        if snap is None:
-            hint = error_hint(state.error or "")
-            text = f"⚠ {state.error or tr('无数据')}"
-            if hint:
-                text += f"\n💡 {hint}"
-            body = QLabel(text)
-            body.setWordWrap(True)
-            body.setStyleSheet(f"color: {FG_DIM};")
-            self._content.addWidget(body)
-        else:
-            plan = f" · {snap.plan_type}" if snap.plan_type else ""
-            self._title.setText(tr("⚡ Codex 额度") + plan)
+        for p in self._providers:
+            st = self._stores[p.name].state
+            self._add_provider_header(p, st)
+            snap = st.snapshot
+            if snap is None:
+                hint = error_hint(st.error or "")
+                text = f"  ⚠ {st.error or tr('无数据')}"
+                if hint:
+                    text += f"\n  💡 {hint}"
+                body = QLabel(text)
+                body.setWordWrap(True)
+                body.setStyleSheet(f"color: {FG_DIM};")
+                self._content.addWidget(body)
+                continue
+            now_ts = snap.fetched_at
             main = snap.primary_limit
             if main is not None:
                 self._add_window_row(main.primary, now_ts)
@@ -280,21 +308,33 @@ class FloatingHud(QWidget):
                 if main.credits is not None and main.credits.has_credits and not self._compact:
                     c = main.credits
                     balance = tr("无限") if c.unlimited else (c.balance or "?")
-                    lbl = QLabel(tr("信用额度余额: {b}").format(b=balance))
+                    lbl = QLabel("  " + tr("信用额度余额: {b}").format(b=balance))
                     lbl.setStyleSheet(f"color: {FG_DIM};")
                     self._content.addWidget(lbl)
             if not self._compact:
                 for extra in snap.limits[1:]:
-                    sep = QLabel(f"── {extra.limit_name or extra.limit_id} ──")
+                    sep = QLabel(f"  ── {extra.limit_name or extra.limit_id} ──")
                     sep.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
                     self._content.addWidget(sep)
                     self._add_window_row(extra.primary, now_ts)
                     if extra.secondary is not None:
                         self._add_window_row(extra.secondary, now_ts)
 
-        self._update_footer(state)
+        self._update_footer()
         self.adjustSize()
-        self.state_changed.emit(state)
+        self.state_changed.emit(self._current_views())
+
+    def _add_provider_header(self, provider, st: ViewState) -> None:
+        color = PROVIDER_COLORS.get(provider.name, FG_DIM)
+        plan = ""
+        if st.snapshot is not None and st.snapshot.plan_type:
+            plan = f" · {st.snapshot.plan_type}"
+        header = QLabel(f"<span style='color:{color}'>●</span> "
+                        f"{html.escape(provider.display_name)}{html.escape(plan)}")
+        header.setTextFormat(Qt.TextFormat.RichText)
+        header.setStyleSheet(f"color: {FG}; font-weight: bold; font-size: 12px;")
+        self._section_headers.append(header)
+        self._content.addWidget(header)
 
     def _add_window_row(self, w: QuotaWindow, now_ts: float) -> None:
         row = _WindowRow()
@@ -312,16 +352,21 @@ class FloatingHud(QWidget):
             BADGE_FAST_STYLE if info.is_fast else BADGE_NORMAL_STYLE)
         self._model_badge.show()
 
-    def _update_footer(self, state: Optional[ViewState] = None) -> None:
-        state = state or self._store.state
-        fresh = StateStore.freshness_text(state.fetched_at)
-        if state.stale:
-            text = tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(f=fresh, e=state.error)
-        elif state.error:
-            text = f"⚠ {state.error}"
+    def _update_footer(self) -> None:
+        """整体页脚：最旧快照的新鲜度；任一陈旧/全部失败时标注。"""
+        views = self._current_views()
+        snaps = [v.state for v in views if v.state.snapshot is not None]
+        if not snaps:
+            first_err = next((v.state.error for v in views if v.state.error), None)
+            self._footer.setText(f"⚠ {first_err}" if first_err else tr("无数据"))
+            return
+        oldest = min(s.fetched_at for s in snaps if s.fetched_at is not None)
+        fresh = StateStore.freshness_text(oldest)
+        if any(s.stale for s in snaps):
+            err = next((s.error for s in snaps if s.error), "")
+            self._footer.setText(tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(f=fresh, e=err))
         else:
-            text = tr("更新于 {f}").format(f=fresh)
-        self._footer.setText(text)
+            self._footer.setText(tr("更新于 {f}").format(f=fresh))
 
     def _retick(self) -> None:
         """30s tick：重排倒计时与新鲜度，不触发网络查询。"""
@@ -336,8 +381,9 @@ class FloatingHud(QWidget):
         self._scheduler.set_visible(True)
         self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
         # 重新显示时若数据已过期，立即补一次刷新
-        fetched = self._store.state.fetched_at
-        if fetched is None or time.time() - fetched > REFRESH_INTERVAL_MS / 1000:
+        fetched = [s.state.fetched_at for s in self._stores.values()]
+        oldest = min((f for f in fetched if f is not None), default=None)
+        if oldest is None or time.time() - oldest > REFRESH_INTERVAL_MS / 1000:
             self.refresh()
         super().showEvent(event)
 
@@ -385,7 +431,7 @@ class FloatingHud(QWidget):
         steps = e.angleDelta().y() / 120
         self.set_opacity(self.windowOpacity() + steps * OPACITY_STEP)
 
-    # ---------- M5：透明度 / 紧凑模式 ----------
+    # ---------- 透明度 / 紧凑模式 ----------
 
     def set_opacity(self, value: float) -> None:
         value = max(OPACITY_MIN, min(1.0, value))
@@ -397,4 +443,4 @@ class FloatingHud(QWidget):
             return
         self._compact = compact
         self._settings.set("compact", compact)
-        self._apply(self._store.state)  # 用当前状态重建内容区
+        self._apply()  # 用当前状态重建内容区

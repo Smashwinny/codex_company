@@ -36,10 +36,13 @@ _EN: dict[str, str] = {
     "无限": "Unlimited",
     # 标题 / CLI
     "⚡ Codex 额度": "⚡ Codex Quota",
+    "⚡ 额度监控": "⚡ Quota Monitor",
     "套餐: {p}": "Plan: {p}",
     "套餐未知": "Plan unknown",
     "Codex 额度（{p}）": "Codex Quota ({p})",
     "Codex 额度：无数据": "Codex Quota: no data",
+    "{name}（{p}）": "{name} ({p})",
+    "{name}：无数据": "{name}: no data",
     # 托盘
     "立即刷新": "Refresh now",
     "显示悬浮窗": "Show widget",

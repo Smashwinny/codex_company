@@ -16,12 +16,10 @@ import sys
 from typing import Optional
 
 from .app_server import (
-    AppServerClient,
     AppServerError,
     CodexNotFoundError,
     QuotaSnapshot,
     QuotaWindow,
-    find_codex_bin,
     is_logged_in,
     snapshot_to_dict,
 )
@@ -79,14 +77,14 @@ def _render_window(w: QuotaWindow, now: float) -> str:
     return f"{w.label:<6} {_bar(rem)} {pct:>6}  {_color_flag(rem)} {countdown}"
 
 
-def render_text(snap: QuotaSnapshot) -> str:
+def render_text(snap: QuotaSnapshot, display_name: str = "Codex") -> str:
     now = snap.fetched_at
     main = snap.primary_limit
     if main is None:
-        return tr("Codex 额度：无数据")
+        return tr("{name}：无数据").format(name=display_name)
 
     plan = tr("套餐: {p}").format(p=snap.plan_type) if snap.plan_type else tr("套餐未知")
-    lines = [tr("Codex 额度（{p}）").format(p=plan)]
+    lines = [tr("{name}（{p}）").format(name=display_name, p=plan)]
 
     lines.append("  " + _render_window(main.primary, now))
     if main.secondary is not None:
@@ -120,25 +118,44 @@ def error_hint(message: str) -> Optional[str]:
 
 
 def run_cli(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(prog="codex_quota", description="Codex 额度查询（CLI 模式）")
+    parser = argparse.ArgumentParser(prog="codex_quota", description="额度查询（CLI 模式）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
-    parser.add_argument("--timeout", type=float, default=8.0, help="app-server 响应超时秒数")
+    parser.add_argument("--timeout", type=float, default=8.0, help="单 provider 查询超时秒数")
     args = parser.parse_args(argv)
 
+    from .providers import default_providers
+
+    providers = default_providers()
+    results: list[tuple[object, QuotaSnapshot]] = []
+    errors: list[tuple[object, Exception]] = []
     try:
-        client = AppServerClient(codex_bin=find_codex_bin(), timeout=args.timeout)
-        snap = client.read_rate_limits()
-    except CodexNotFoundError as exc:
-        print(tr("错误: {e}").format(e=exc), file=sys.stderr)
-        return 2
-    except AppServerError as exc:
-        hint = error_hint(str(exc))
-        msg = tr("查询失败: {e}").format(e=exc)
-        print(msg + (f"（{hint}）" if hint else ""), file=sys.stderr)
-        return 3
+        for p in providers:
+            try:
+                results.append((p, p.fetch()))
+            except Exception as exc:
+                errors.append((p, exc))
+    finally:
+        for p in providers:
+            p.close()  # 释放 kimi web 等保活进程，CLI 是短进程不能留孤儿
 
     if args.json:
-        print(json.dumps(snapshot_to_dict(snap), ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "providers": {p.name: snapshot_to_dict(s) for p, s in results},
+            "errors": {p.name: str(e) for p, e in errors},
+        }, ensure_ascii=False, indent=2))
     else:
-        print(render_text(snap))
-    return 0
+        for i, (p, snap) in enumerate(results):
+            if i:
+                print()
+            print(render_text(snap, p.display_name))
+        for p, exc in errors:
+            hint = error_hint(str(exc))
+            msg = f"{p.display_name}: " + tr("查询失败: {e}").format(e=exc)
+            print(msg + (f"（{hint}）" if hint else ""), file=sys.stderr)
+
+    if results:
+        return 0
+    # 全部失败：有「未安装」类错误用 2，其余 3
+    if any(isinstance(e, CodexNotFoundError) for _, e in errors):
+        return 2
+    return 3

@@ -10,6 +10,37 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ["XDG_CACHE_HOME"] = tempfile.mkdtemp(prefix="codex-quota-test-cache-")
 # 固定测试语言为中文（各 en 用例会显式 set_language 覆盖）
 os.environ["CODEX_QUOTA_LANG"] = "zh"
+# 默认只启用 codex provider，防止测试拉起真实 kimi web 服务器
+os.environ["CODEX_QUOTA_PROVIDERS"] = "codex"
+
+
+class FakeProvider:
+    """测试用内存 provider：fetch 返回固定快照或抛错。"""
+
+    def __init__(self, name="codex", display_name=None, snapshot=None, error=None):
+        self.name = name
+        self.display_name = display_name or name.capitalize()
+        self._snapshot = snapshot
+        self._error = error
+        self.closed = False
+
+    def fetch(self):
+        if self._error:
+            raise RuntimeError(self._error)
+        return self._snapshot
+
+    def close(self):
+        self.closed = True
+
+
+def codex_snapshot():
+    """带 provider 字段的 codex 快照（基于真实响应 fixture）。"""
+    from codex_quota.app_server import parse_rate_limits_response
+    from tests.test_parse import NOW, REAL_RESPONSE
+
+    snap = parse_rate_limits_response(REAL_RESPONSE, now=NOW)
+    snap.provider = "codex"
+    return snap
 
 
 @pytest.fixture(autouse=True)
