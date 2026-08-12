@@ -28,20 +28,21 @@ from .app_server import (
 BAR_WIDTH = 20
 
 
-def _bar(used_percent: Optional[float]) -> str:
-    if used_percent is None:
+def _bar(remaining_percent: Optional[float]) -> str:
+    """进度条：填充部分表示剩余额度。"""
+    if remaining_percent is None:
         return "?" * BAR_WIDTH
-    filled = round(BAR_WIDTH * min(max(used_percent, 0), 100) / 100)
+    filled = round(BAR_WIDTH * min(max(remaining_percent, 0), 100) / 100)
     return "█" * filled + "░" * (BAR_WIDTH - filled)
 
 
-def _color_flag(used_percent: Optional[float]) -> str:
-    """与悬浮窗一致的三档阈值：绿 <70 / 黄 <90 / 红 ≥90。"""
-    if used_percent is None:
+def _color_flag(remaining_percent: Optional[float]) -> str:
+    """与悬浮窗一致的三档阈值（按剩余量）：绿 >30 / 黄 ≤30 / 红 ≤10。"""
+    if remaining_percent is None:
         return "?"
-    if used_percent >= 90:
+    if remaining_percent <= 10:
         return "🔴"
-    if used_percent >= 70:
+    if remaining_percent <= 30:
         return "🟡"
     return "🟢"
 
@@ -70,9 +71,10 @@ def _fmt_reset_at(reset_at: Optional[float]) -> str:
 
 
 def _render_window(w: QuotaWindow, now: float) -> str:
-    pct = "?" if w.used_percent is None else f"{w.used_percent:.0f}%"
+    rem = w.remaining_percent
+    pct = "?" if rem is None else f"剩 {rem:.0f}%"
     countdown = _fmt_countdown(w.reset_in_seconds(now)) + _fmt_reset_at(w.reset_at)
-    return f"{w.label:<6} {_bar(w.used_percent)} {pct:>4}  {_color_flag(w.used_percent)} {countdown}"
+    return f"{w.label:<6} {_bar(rem)} {pct:>6}  {_color_flag(rem)} {countdown}"
 
 
 def render_text(snap: QuotaSnapshot) -> str:

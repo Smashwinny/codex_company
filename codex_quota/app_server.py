@@ -40,6 +40,13 @@ class QuotaWindow:
     reset_at: Optional[float] = None  # Unix 秒
 
     @property
+    def remaining_percent(self) -> Optional[float]:
+        """剩余额度百分比（展示层统一用这个）。"""
+        if self.used_percent is None:
+            return None
+        return max(0.0, 100.0 - self.used_percent)
+
+    @property
     def label(self) -> str:
         """按 windowDurationMins 归一化窗口名称。"""
         m = self.window_minutes

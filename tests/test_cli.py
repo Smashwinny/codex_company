@@ -25,7 +25,8 @@ class TestRenderText:
         text = render_text(snap())
         assert "prolite" in text
         assert "本周" in text
-        assert "91%" in text
+        assert "剩 9%" in text          # 已用 91% → 剩余 9%
+        assert "剩 98%" in text        # Spark 已用 2% → 剩余 98%
         assert "GPT-5.3-Codex-Spark" in text
         assert "更新于" in text
 
@@ -38,6 +39,7 @@ class TestRenderText:
 
 class TestHelpers:
     def test_bar(self):
+        # 填充部分表示剩余额度
         assert _bar(0) == "░" * 20
         assert _bar(100) == "█" * 20
         assert _bar(50) == "█" * 10 + "░" * 10
@@ -45,11 +47,13 @@ class TestHelpers:
         assert _bar(150) == "█" * 20  # 超界截断
 
     def test_color_thresholds(self):
-        assert _color_flag(0) == "🟢"
-        assert _color_flag(69) == "🟢"
-        assert _color_flag(70) == "🟡"
-        assert _color_flag(89) == "🟡"
-        assert _color_flag(90) == "🔴"
+        # 按剩余量：绿 >30 / 黄 ≤30 / 红 ≤10
+        assert _color_flag(100) == "🟢"
+        assert _color_flag(31) == "🟢"
+        assert _color_flag(30) == "🟡"
+        assert _color_flag(11) == "🟡"
+        assert _color_flag(10) == "🔴"
+        assert _color_flag(0) == "🔴"
         assert _color_flag(None) == "?"
 
     def test_countdown(self):

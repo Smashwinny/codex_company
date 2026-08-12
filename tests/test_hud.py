@@ -50,7 +50,7 @@ class TestHudSmoke:
         assert "prolite" in hud._title.text()
         # 主窗口一行 + Spark 一行
         assert len(hud._rows) == 2
-        assert "91%" in hud._rows[0][0].pct.text()
+        assert "剩 9%" in hud._rows[0][0].pct.text()  # 已用 91% → 剩余 9%
         assert "更新于" in hud._footer.text()
 
     def test_error_without_history(self, hud):
@@ -74,24 +74,25 @@ class TestHudSmoke:
 
 class TestWidgets:
     def test_threshold_colors(self):
+        # 按剩余量：绿 >30 / 黄 ≤30 / 红 ≤10
         assert threshold_color(None) != threshold_color(50)
         assert threshold_color(50).name() == "#3fb950"
-        assert threshold_color(80).name() == "#d29922"
-        assert threshold_color(95).name() == "#f85149"
+        assert threshold_color(20).name() == "#d29922"
+        assert threshold_color(5).name() == "#f85149"
 
     def test_quota_bar_paint_offscreen(self, qapp):
         bar = QuotaBar()
-        bar.set_used(91)
+        bar.set_remaining(9)
         bar.resize(200, 10)
         pix = bar.grab()  # 触发 paintEvent，不崩即通过
         assert not pix.isNull()
 
     def test_quota_bar_none_and_over(self, qapp):
         bar = QuotaBar()
-        bar.set_used(None)
+        bar.set_remaining(None)
         bar.resize(200, 10)
         assert not bar.grab().isNull()
-        bar.set_used(150)
+        bar.set_remaining(150)
         assert not bar.grab().isNull()
 
 
@@ -130,7 +131,7 @@ class TestInteractions:
 
     def test_constructor_applies_snapshot(self, live_hud):
         assert len(live_hud._rows) == 2
-        assert "91%" in live_hud._rows[0][0].pct.text()
+        assert "剩 9%" in live_hud._rows[0][0].pct.text()
 
     def test_refresh_button_refetches(self, live_hud):
         assert live_hud._refresh_btn.isEnabled()

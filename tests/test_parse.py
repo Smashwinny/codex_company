@@ -66,6 +66,7 @@ class TestParseRealResponse:
         assert main is not None
         assert main.limit_id == "codex"
         assert main.primary.used_percent == 91
+        assert main.primary.remaining_percent == pytest.approx(9.0)
         assert main.primary.window_minutes == 10080
         assert main.primary.label == "本周"
         assert main.primary.reset_in_seconds(NOW) == pytest.approx(19003)
@@ -94,6 +95,20 @@ class TestWindowClassification:
         assert QuotaWindow(window_minutes=minutes).label == label
 
 
+class TestRemainingPercent:
+    def test_normal(self):
+        assert QuotaWindow(used_percent=91).remaining_percent == pytest.approx(9.0)
+
+    def test_zero_used_means_full_remaining(self):
+        assert QuotaWindow(used_percent=0).remaining_percent == 100.0
+
+    def test_unknown_used_means_unknown_remaining(self):
+        assert QuotaWindow(used_percent=None).remaining_percent is None
+
+    def test_over_100_used_clamps_to_zero(self):
+        assert QuotaWindow(used_percent=105).remaining_percent == 0.0
+
+
 class TestEdgeCases:
     def test_zero_percent_is_preserved(self):
         resp = {"rateLimits": {"limitId": "codex", "planType": "pro",
@@ -109,6 +124,7 @@ class TestEdgeCases:
             {"rateLimits": {"limitId": "codex", "primary": {}}}, now=NOW)
         w = snap.primary_limit.primary
         assert w.used_percent is None
+        assert w.remaining_percent is None
         assert w.window_minutes is None
         assert w.reset_at is None
         assert w.reset_in_seconds(NOW) is None

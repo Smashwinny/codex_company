@@ -87,14 +87,15 @@ class _WindowRow(QFrame):
         lay.addWidget(self.countdown)
 
     def bind(self, w: QuotaWindow, now_ts: float) -> None:
+        rem = w.remaining_percent
         self.label.setText(w.label)
-        self.bar.set_used(w.used_percent)
-        if w.used_percent is None:
+        self.bar.set_remaining(rem)
+        if rem is None:
             self.pct.setText("?")
             self.pct.setStyleSheet(f"color: {FG_DIM};")
         else:
-            self.pct.setText(f"{w.used_percent:.0f}%")
-            self.pct.setStyleSheet(f"color: {threshold_color(w.used_percent).name()};")
+            self.pct.setText(f"剩 {rem:.0f}%")
+            self.pct.setStyleSheet(f"color: {threshold_color(rem).name()};")
         self.countdown.setText(_countdown_text(w, now_ts))
 
 
