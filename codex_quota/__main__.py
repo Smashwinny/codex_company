@@ -38,6 +38,26 @@ def _run_hud(args: list[str]) -> int:
     hud = FloatingHud(providers)
     hud.restore_position()
 
+    # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）
+    web_server = None
+    settings = hud._settings
+    if settings.get("web_enabled"):
+        from .web import WebServer, generate_token
+
+        token = settings.get("web_token")
+        if not token:
+            token = generate_token()
+            settings.set("web_token", token)
+        web_server = WebServer(hud._current_views,
+                               port=int(settings.get("web_port")), token=token)
+        try:
+            web_server.start()
+            hud.web_url = web_server.url
+            print(f"手机访问: {hud.web_url}", file=sys.stderr)
+        except OSError as exc:
+            print(f"Web 服务启动失败（不影响悬浮窗）: {exc}", file=sys.stderr)
+            web_server = None
+
     if QSystemTrayIcon.isSystemTrayAvailable():
         from .ui.tray import QuotaTray
 
@@ -53,6 +73,8 @@ def _run_hud(args: list[str]) -> int:
     try:
         return app.exec()
     finally:
+        if web_server is not None:
+            web_server.stop()
         for p in providers:
             p.close()  # 释放 kimi web 等保活进程
 

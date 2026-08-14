@@ -48,6 +48,8 @@ _EN: dict[str, str] = {
     "显示悬浮窗": "Show widget",
     "隐藏悬浮窗": "Hide widget",
     "开机自启": "Launch at login",
+    "复制手机访问地址": "Copy phone access URL",
+    "手机与电脑同一局域网，浏览器打开即看": "Open in phone browser on the same LAN",
     "退出": "Quit",
     "Codex 额度": "Codex Quota",
     "未知": "unknown",

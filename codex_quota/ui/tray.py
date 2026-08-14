@@ -91,6 +91,9 @@ class QuotaTray(QObject):
         self.action_autostart.setCheckable(True)
         self.action_autostart.setChecked(autostart.is_enabled())
         self.action_autostart.toggled.connect(self._toggle_autostart)
+        self.action_phone = QAction(tr("复制手机访问地址"), self)
+        self.action_phone.setToolTip(tr("手机与电脑同一局域网，浏览器打开即看"))
+        self.action_phone.triggered.connect(self._copy_phone_url)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -98,6 +101,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_toggle)
         self._menu.addAction(self.action_refresh)
         self._menu.addAction(self.action_autostart)
+        self._menu.addAction(self.action_phone)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -159,6 +163,14 @@ class QuotaTray(QObject):
             autostart.enable()
         else:
             autostart.disable()
+
+    def _copy_phone_url(self) -> None:
+        from PyQt6.QtGui import QGuiApplication
+
+        url = getattr(self._hud, "web_url", None)
+        if url:
+            QGuiApplication.clipboard().setText(url)
+            self.action_phone.setToolTip(url)  # 菜单悬停可见完整地址
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

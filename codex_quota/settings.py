@@ -20,6 +20,9 @@ DEFAULTS: dict[str, Any] = {
     "opacity": 1.0,        # 窗口透明度 0.3–1.0
     "compact": False,      # 紧凑模式：只显示主限额行
     "pos": None,           # 窗口位置记忆 [x, y]
+    "web_enabled": True,   # 手机访问（局域网 Web 服务）
+    "web_port": 8642,      # Web 服务起始端口（冲突自动递增）
+    "web_token": None,     # URL 鉴权 token，首次运行生成后持久化
 }
 
 

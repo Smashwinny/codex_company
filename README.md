@@ -46,6 +46,17 @@ cd codex_company
 - 日志：`~/.cache/codex-quota/hud.log`
 - 设置：`~/.config/codex-quota/settings.json`（透明度/紧凑模式/位置）
 
+### 手机查看
+
+应用内置零依赖 Web 服务，启动后控制台和托盘菜单（"复制手机访问地址"）会给出形如
+`http://<电脑IP>:8642/t/<token>/` 的地址：
+
+- 手机与电脑连**同一局域网**，浏览器打开即可；可"添加到主屏幕"当 App 用
+- 页面每 30s 自动刷新，倒计时 15s 本地重排，与悬浮窗同数据源（无额外查询开销）
+- token 藏在 URL 里鉴权（无 token 一律 404），首次运行自动生成并持久化
+- 外出访问：挂 Tailscale 等私有组网后用组网 IP 打开同一地址
+- 关闭方式：settings.json 里 `"web_enabled": false`
+
 ### 只要 CLI（无 GUI 依赖）
 
 CLI 模式只用 Python 标准库，不装 PyQt6 也能跑：
@@ -119,6 +130,7 @@ Kimi（套餐: kimi-code/k3）
 - [x] M4 系统托盘（GNOME 需 AppIndicator 扩展）
 - [x] M5 透明度/紧凑展开/开机自启/i18n/位置记忆
 - [x] M6 多模型用量（Codex + Kimi 双 provider 分区显示）
+- [x] M7 手机查看（内置 Web 服务 + token 鉴权 + 移动端页面）
 
 ## 环境变量
 
