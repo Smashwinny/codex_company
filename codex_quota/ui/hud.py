@@ -48,6 +48,15 @@ BG = QColor(13, 17, 23, 230)   # 半透明深色底
 FG = "#e6edf3"
 FG_DIM = "#8b949e"
 
+MAX_WIDTH = 420        # 窗口最大宽度，防长错误文本把窗口撑宽
+FOOTER_MAX_CHARS = 48  # 页脚单行最大字符数，超出截断
+ERROR_MAX_CHARS = 120  # 分区内联错误最大字符数（完整内容放 tooltip）
+
+
+def _short(text: object, limit: int) -> str:
+    s = str(text)
+    return s if len(s) <= limit else s[: limit - 1] + "…"
+
 # provider 分区标识色
 PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7"}
 
@@ -150,6 +159,7 @@ class FloatingHud(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMinimumWidth(300)
+        self.setMaximumWidth(MAX_WIDTH)
 
         if providers is None:
             from ..providers import default_providers
@@ -291,11 +301,12 @@ class FloatingHud(QWidget):
             snap = st.snapshot
             if snap is None:
                 hint = error_hint(st.error or "")
-                text = f"  ⚠ {st.error or tr('无数据')}"
+                text = f"  ⚠ {_short(st.error or tr('无数据'), ERROR_MAX_CHARS)}"
                 if hint:
                     text += f"\n  💡 {hint}"
                 body = QLabel(text)
                 body.setWordWrap(True)
+                body.setToolTip(str(st.error or ""))  # 完整错误放 tooltip
                 body.setStyleSheet(f"color: {FG_DIM};")
                 self._content.addWidget(body)
                 continue
@@ -353,18 +364,20 @@ class FloatingHud(QWidget):
         self._model_badge.show()
 
     def _update_footer(self) -> None:
-        """整体页脚：最旧快照的新鲜度；任一陈旧/全部失败时标注。"""
+        """整体页脚：最旧快照的新鲜度；任一陈旧/全部失败时标注（超长截断防撑宽窗口）。"""
         views = self._current_views()
         snaps = [v.state for v in views if v.state.snapshot is not None]
         if not snaps:
             first_err = next((v.state.error for v in views if v.state.error), None)
-            self._footer.setText(f"⚠ {first_err}" if first_err else tr("无数据"))
+            self._footer.setText(
+                f"⚠ {_short(first_err, FOOTER_MAX_CHARS)}" if first_err else tr("无数据"))
             return
         oldest = min(s.fetched_at for s in snaps if s.fetched_at is not None)
         fresh = StateStore.freshness_text(oldest)
         if any(s.stale for s in snaps):
             err = next((s.error for s in snaps if s.error), "")
-            self._footer.setText(tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(f=fresh, e=err))
+            self._footer.setText(tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(
+                f=fresh, e=_short(err, 20)))
         else:
             self._footer.setText(tr("更新于 {f}").format(f=fresh))
 

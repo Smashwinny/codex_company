@@ -173,16 +173,26 @@ class TestKimiHttpFetch:
 class TestKimiProcessLifecycle:
     @pytest.fixture
     def fake_kimi(self, tmp_path):
-        """假 kimi：打印 Local/Token 行后睡眠（模拟 kimi web 常驻）。"""
+        """假 kimi：记录 argv、打印 Local/Token 行后睡眠（模拟 kimi web 常驻）。"""
         script = tmp_path / "kimi"
         script.write_text(
             "#!/bin/sh\n"
+            f'echo "$@" > "{tmp_path}/argv.txt"\n'
             'echo "  Local:    http://127.0.0.1:9999/#token=fake-token-123"\n'
             'echo "  Token:    fake-token-123"\n'
             "sleep 300\n"
         )
         script.chmod(0o755)
         return str(script)
+
+    def test_spawn_uses_no_open(self, fake_kimi, tmp_path):
+        """--no-open：防止每次拉服务器都弹出浏览器标签页（用户实测踩坑）。"""
+        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10)
+        p._ensure_server()
+        argv = (tmp_path / "argv.txt").read_text()
+        assert "--no-open" in argv
+        assert "--port" in argv
+        p.close()
 
     def test_token_parsed_and_close_kills(self, fake_kimi):
         p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10)
@@ -202,6 +212,18 @@ class TestKimiProcessLifecycle:
         assert p._proc is proc
         p.close()
 
+    def test_restart_cooldown(self, fake_kimi):
+        """重启冷却：频繁失败不得反复拉服务器（会刷屏/刷标签页）。"""
+        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10,
+                         restart_cooldown=600)
+        p._restart_server()  # 第一次重启成功
+        first_proc = p._proc
+        assert first_proc is not None and first_proc.poll() is None
+        with pytest.raises(KimiError, match="冷却"):
+            p._restart_server()  # 冷却期内第二次 → 拒绝
+        assert p._proc.poll() is None  # 第一次拉起的还活着
+        p.close()
+
     def test_no_token_raises(self, tmp_path):
         script = tmp_path / "kimi"
         script.write_text("#!/bin/sh\nexit 1\n")
@@ -217,3 +239,20 @@ class TestKimiProcessLifecycle:
         p = KimiProvider()
         with pytest.raises(KimiError, match="kimi"):
             p._ensure_server()
+
+
+class TestKimiFetchErrors:
+    def test_http_error_concise_no_restart(self):
+        """HTTP 层错误（如 401）：报简短错误，不走重启路径。"""
+        import urllib.error
+
+        p = KimiProvider(base_url="http://127.0.0.1:1", token="x")
+        p._ensure_server = lambda: None  # 跳过服务器管理
+
+        def raise_http(path):
+            raise urllib.error.HTTPError(
+                "http://x", 401, "Unauthorized", None, None)
+
+        p._get_json = raise_http
+        with pytest.raises(KimiError, match="HTTP 401"):
+            p.fetch()

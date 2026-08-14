@@ -101,6 +101,24 @@ class TestHudSmoke:
         header_texts = [h.text() for h in hud._section_headers]
         assert any("Kimi" in t for t in header_texts)  # kimi 分区仍在（显示错误）
 
+    def test_long_error_does_not_stretch_window(self, hud):
+        """长错误文本不得把窗口撑宽（页脚/内联错误都截断）。"""
+        from codex_quota.ui.hud import ERROR_MAX_CHARS, FOOTER_MAX_CHARS, MAX_WIDTH
+
+        hud._stores["codex"].on_error("x" * 500)
+        hud._apply()
+        assert hud.maximumWidth() == MAX_WIDTH
+        assert len(hud._footer.text()) <= FOOTER_MAX_CHARS + 3  # ⚠ + …
+        hud.show()
+        assert hud.width() <= MAX_WIDTH
+        hud.hide()
+
+    def test_short_helper(self):
+        from codex_quota.ui.hud import _short
+
+        assert _short("abc", 10) == "abc"
+        assert _short("x" * 200, 120) == "x" * 119 + "…"
+
 
 class TestWidgets:
     def test_threshold_colors(self):

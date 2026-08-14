@@ -106,15 +106,22 @@ class KimiProvider:
 
     def __init__(self, kimi_bin: Optional[str] = None, *,
                  base_url: Optional[str] = None, token: Optional[str] = None,
-                 startup_timeout: float = 20.0, request_timeout: float = 8.0):
+                 startup_timeout: float = 20.0, request_timeout: float = 8.0,
+                 restart_cooldown: float = 300.0):
         self._bin = kimi_bin
         self._base_url = base_url      # 注入则跳过进程管理（测试/外部服务器）
         self._token = token
         self._startup_timeout = startup_timeout
         self._request_timeout = request_timeout
+        self._restart_cooldown = restart_cooldown
+        self._last_restart = 0.0
         self._proc: Optional[subprocess.Popen] = None
 
     # ---------- 进程管理 ----------
+
+    def _spawn_args(self, port: int) -> list[str]:
+        # --no-open：禁止服务器启动时自动打开浏览器标签页
+        return [self._bin, "web", "--port", str(port), "--no-open"]
 
     def _ensure_server(self) -> None:
         if self._base_url and self._token:
@@ -133,7 +140,7 @@ class KimiProvider:
             port = s.getsockname()[1]
 
         self._proc = subprocess.Popen(
-            [self._bin, "web", "--port", str(port)],
+            self._spawn_args(port),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -188,16 +195,30 @@ class KimiProvider:
         with urllib.request.urlopen(req, timeout=self._request_timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
+    def _restart_server(self) -> None:
+        """重启保活服务器。带冷却：频繁重启会反复拉进程，必须限流。"""
+        now = time.monotonic()
+        if now - self._last_restart < self._restart_cooldown:
+            raise KimiError("kimi web 无响应（重启冷却中，稍后自动恢复）")
+        self._last_restart = now
+        self.close()
+        self._base_url = self._token = None
+        self._ensure_server()
+
     def fetch(self) -> QuotaSnapshot:
         self._ensure_server()
         try:
             usage = self._get_json("/api/v1/oauth/usage")
+        except urllib.error.HTTPError as exc:
+            # HTTP 层错误（401/404…）：连接是通的，重启无意义
+            raise KimiError(f"kimi 接口返回 HTTP {exc.code}") from exc
         except (urllib.error.URLError, OSError):
-            # 服务器可能已死：重启一次再试
-            self.close()
-            self._base_url = self._token = None
-            self._ensure_server()
-            usage = self._get_json("/api/v1/oauth/usage")
+            # 连接级失败：服务器可能已死，重启一次再试（冷却限流）
+            self._restart_server()
+            try:
+                usage = self._get_json("/api/v1/oauth/usage")
+            except Exception as exc:
+                raise KimiError("kimi web 重启后仍无响应") from exc
 
         model = None
         try:
