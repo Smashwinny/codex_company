@@ -1,10 +1,10 @@
-"""CLI 模式：一次性输出 Codex 额度。
+"""CLI 模式：一次性输出所有 provider 的额度（Codex / Kimi …）。
 
 用法：
     python -m codex_quota --cli          # 人类可读（进度条 + 倒计时）
-    python -m codex_quota --cli --json   # 结构化 JSON
+    python -m codex_quota --cli --json   # 结构化 JSON（按 provider 分组）
 
-退出码：0 成功；2 未安装 codex；3 查询失败（未登录/超时/协议错误）。
+退出码：0 至少一个 provider 成功；2 有「未安装 CLI」类错误；3 全部查询失败。
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import sys
 from typing import Optional
 
 from .app_server import (
-    AppServerError,
     CodexNotFoundError,
     QuotaSnapshot,
     QuotaWindow,
