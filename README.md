@@ -48,14 +48,18 @@ cd codex_company
 
 ### 手机查看
 
-应用内置零依赖 Web 服务，启动后控制台和托盘菜单（"复制手机访问地址"）会给出形如
-`http://<电脑IP>:8642/t/<token>/` 的地址：
+应用内置零依赖 Web 服务，提供两种访问地址（控制台和托盘菜单"复制手机访问地址"均可获取）：
 
-- 手机与电脑连**同一局域网**，浏览器打开即可；可"添加到主屏幕"当 App 用
-- 页面每 30s 自动刷新，倒计时 15s 本地重排，与悬浮窗同数据源（无额外查询开销）
-- token 藏在 URL 里鉴权（无 token 一律 404），首次运行自动生成并持久化
-- 外出访问：挂 Tailscale 等私有组网后用组网 IP 打开同一地址
-- 关闭方式：settings.json 里 `"web_enabled": false`
+| 场景 | 地址形式 | 说明 |
+|------|----------|------|
+| **任意网络（4G/外出）** | `https://<随机>.trycloudflare.com/t/<token>/` | cloudflared 免费隧道，免 root 免注册，install.sh 自动下载 |
+| 同一局域网 | `http://<电脑IP>:8642/t/<token>/` | 不经过公网，延迟更低 |
+
+- 手机浏览器打开后"添加到主屏幕"，当 App 用；页面 30s 自动刷新
+- **鉴权**：token 藏在 URL 里（无 token 一律 404），首启生成并持久化；别把完整 URL 分享出去
+- **隧道地址是临时的**：每次应用重启会变，以托盘菜单/日志里的当前地址为准
+  （需要固定域名可接 Cloudflare 账号的 Named Tunnel，后续可加）
+- 关闭手机访问：settings.json 设 `"web_enabled": false`；只关公网隧道：`"tunnel_enabled": false`
 
 ### 只要 CLI（无 GUI 依赖）
 
@@ -131,6 +135,7 @@ Kimi（套餐: kimi-code/k3）
 - [x] M5 透明度/紧凑展开/开机自启/i18n/位置记忆
 - [x] M6 多模型用量（Codex + Kimi 双 provider 分区显示）
 - [x] M7 手机查看（内置 Web 服务 + token 鉴权 + 移动端页面）
+- [x] M8 公网访问（cloudflared 隧道，免 root 免注册，4G/外出可看）
 
 ## 环境变量
 

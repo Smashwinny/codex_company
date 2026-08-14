@@ -23,6 +23,7 @@ DEFAULTS: dict[str, Any] = {
     "web_enabled": True,   # 手机访问（局域网 Web 服务）
     "web_port": 8642,      # Web 服务起始端口（冲突自动递增）
     "web_token": None,     # URL 鉴权 token，首次运行生成后持久化
+    "tunnel_enabled": True,  # cloudflared 公网隧道（任意网络可访问）
 }
 
 

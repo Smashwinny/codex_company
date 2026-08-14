@@ -13,7 +13,7 @@ cd "$ROOT"
 warn() { echo "    ⚠ $*"; }
 ok()   { echo "    OK: $*"; }
 
-echo "==> [1/4] 检查依赖"
+echo "==> [1/5] 检查依赖"
 
 # --- python3 ≥ 3.10 ---
 if ! command -v python3 >/dev/null; then
@@ -42,7 +42,7 @@ else
     warn "未找到 kimi CLI —— 仅显示 Codex（安装后自动启用，无需重装）"
 fi
 
-echo "==> [2/4] Python 虚拟环境（PyQt6）"
+echo "==> [2/5] Python 虚拟环境（PyQt6）"
 if [ ! -x "$ROOT/.venv/bin/python" ]; then
     if command -v virtualenv >/dev/null; then
         virtualenv .venv
@@ -61,7 +61,7 @@ if ! "$ROOT/.venv/bin/python" -c "import PyQt6" 2>/dev/null; then
 fi
 ok "PyQt6 $("$ROOT/.venv/bin/python" -c 'import PyQt6.QtCore as c; print(c.QT_VERSION_STR)')"
 
-echo "==> [3/4] libxcb-cursor（Qt xcb 插件依赖）"
+echo "==> [3/5] libxcb-cursor（Qt xcb 插件依赖）"
 if ldconfig -p 2>/dev/null | grep -q libxcb-cursor; then
     ok "系统已安装"
 elif [ -f "$ROOT/vendor/lib/libxcb-cursor.so.0" ]; then
@@ -79,7 +79,32 @@ else
     rm -rf "$TMP"
 fi
 
-echo "==> [4/4] 桌面入口"
+echo "==> [4/5] cloudflared（手机公网访问隧道，可选但推荐）"
+ARCH="$(uname -m)"
+case "$ARCH" in
+    x86_64) CF_ASSET="cloudflared-linux-amd64" ;;
+    aarch64|arm64) CF_ASSET="cloudflared-linux-arm64" ;;
+    *) CF_ASSET="" ;;
+esac
+if command -v cloudflared >/dev/null; then
+    ok "系统已安装: $(command -v cloudflared)"
+elif [ -x "$ROOT/vendor/bin/cloudflared" ]; then
+    ok "vendor/bin/ 已存在"
+elif [ -z "$CF_ASSET" ]; then
+    warn "不支持的架构 $ARCH，跳过（仅局域网访问，不影响其他功能）"
+else
+    echo "    下载 cloudflared（免 root，用于手机 4G/外出访问）..."
+    mkdir -p "$ROOT/vendor/bin"
+    if curl -fsSL -o "$ROOT/vendor/bin/cloudflared" \
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/$CF_ASSET"; then
+        chmod +x "$ROOT/vendor/bin/cloudflared"
+        ok "vendor/bin/cloudflared"
+    else
+        warn "下载失败（仅局域网访问，不影响其他功能）；可稍后重跑 install.sh"
+    fi
+fi
+
+echo "==> [5/5] 桌面入口"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 mkdir -p "$APPS"
 cat > "$APPS/codex-quota.desktop" <<EOF

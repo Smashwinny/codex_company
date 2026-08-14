@@ -167,10 +167,16 @@ class QuotaTray(QObject):
     def _copy_phone_url(self) -> None:
         from PyQt6.QtGui import QGuiApplication
 
-        url = getattr(self._hud, "web_url", None)
+        # 有公网隧道优先复制公网地址（任意网络可达），否则局域网地址
+        url = (getattr(self._hud, "public_url", None)
+               or getattr(self._hud, "web_url", None))
         if url:
             QGuiApplication.clipboard().setText(url)
-            self.action_phone.setToolTip(url)  # 菜单悬停可见完整地址
+            tips = [url]
+            lan = getattr(self._hud, "web_url", None)
+            if lan and lan != url:
+                tips.append(lan)
+            self.action_phone.setToolTip("\n".join(tips))  # 悬停可见全部地址
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

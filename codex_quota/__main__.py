@@ -38,8 +38,9 @@ def _run_hud(args: list[str]) -> int:
     hud = FloatingHud(providers)
     hud.restore_position()
 
-    # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）
+    # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）+ 可选公网隧道
     web_server = None
+    tunnel = None
     settings = hud._settings
     if settings.get("web_enabled"):
         from .web import WebServer, generate_token
@@ -53,10 +54,23 @@ def _run_hud(args: list[str]) -> int:
         try:
             web_server.start()
             hud.web_url = web_server.url
-            print(f"手机访问: {hud.web_url}", file=sys.stderr)
+            print(f"手机访问(局域网): {hud.web_url}", file=sys.stderr)
         except OSError as exc:
             print(f"Web 服务启动失败（不影响悬浮窗）: {exc}", file=sys.stderr)
             web_server = None
+
+        # 公网隧道：任意网络（4G/外出）可访问；cloudflared 缺失时仅局域网
+        if web_server is not None and settings.get("tunnel_enabled"):
+            from .tunnel import Tunnel, TunnelError
+
+            tunnel = Tunnel(web_server.port)
+            try:
+                public_base = tunnel.start()
+                hud.public_url = f"{public_base}/t/{token}/"
+                print(f"手机访问(公网): {hud.public_url}", file=sys.stderr)
+            except TunnelError as exc:
+                print(f"公网隧道不可用（仅局域网访问）: {exc}", file=sys.stderr)
+                tunnel = None
 
     if QSystemTrayIcon.isSystemTrayAvailable():
         from .ui.tray import QuotaTray
@@ -73,6 +87,8 @@ def _run_hud(args: list[str]) -> int:
     try:
         return app.exec()
     finally:
+        if tunnel is not None:
+            tunnel.stop()
         if web_server is not None:
             web_server.stop()
         for p in providers:
