@@ -32,13 +32,29 @@ class CodexNotFoundError(AppServerError):
     pass
 
 
+# 货币符号（余额型 provider 用）
+CURRENCY_SYMBOLS = {"CNY": "¥", "USD": "$", "EUR": "€"}
+
+
 @dataclass
 class QuotaWindow:
-    """单个限流窗口。字段缺失时全部为 None（未知），与 0（已用 0%）严格区分。"""
+    """单个限流窗口。字段缺失时全部为 None（未知），与 0（已用 0%）严格区分。
+
+    两种形态：
+    - 窗口型（codex/kimi）：used_percent + window_minutes + reset_at
+    - 余额型（deepseek 等）：abs_remaining + abs_unit（无窗口、无重置时间）
+    """
 
     used_percent: Optional[float] = None
     window_minutes: Optional[int] = None
     reset_at: Optional[float] = None  # Unix 秒
+    abs_remaining: Optional[float] = None  # 余额型：绝对剩余量（如 12.34 元）
+    abs_unit: Optional[str] = None         # 余额型单位：CNY / USD / credits …
+
+    @property
+    def is_balance(self) -> bool:
+        """余额型：无百分比但有绝对余额。"""
+        return self.used_percent is None and self.abs_remaining is not None
 
     @property
     def remaining_percent(self) -> Optional[float]:
@@ -48,10 +64,36 @@ class QuotaWindow:
         return max(0.0, 100.0 - self.used_percent)
 
     @property
+    def abs_text(self) -> Optional[str]:
+        """余额型展示文本：¥12.34 / $5.00 / 100 credits。"""
+        if self.abs_remaining is None:
+            return None
+        unit = self.abs_unit or ""
+        symbol = CURRENCY_SYMBOLS.get(unit)
+        if symbol:
+            return f"{symbol}{self.abs_remaining:.2f}"
+        return f"{self.abs_remaining:.2f} {unit}".rstrip()
+
+    @property
+    def abs_level(self) -> Optional[str]:
+        """余额告警等级：crit（红）/ warn（黄）/ ok（绿）。阈值按币种经验值。"""
+        if self.abs_remaining is None:
+            return None
+        warn_at, crit_at = {"USD": (5.0, 1.0), "EUR": (5.0, 1.0)}.get(
+            self.abs_unit or "", (20.0, 5.0))
+        if self.abs_remaining <= crit_at:
+            return "crit"
+        if self.abs_remaining <= warn_at:
+            return "warn"
+        return "ok"
+
+    @property
     def label(self) -> str:
-        """按 windowDurationMins 归一化窗口名称（随 i18n 语言输出）。"""
+        """窗口名称（随 i18n 语言输出）；余额型固定为"余额"。"""
         from .i18n import tr
 
+        if self.is_balance:
+            return tr("余额")
         m = self.window_minutes
         if m is None:
             return tr("窗口")
@@ -189,6 +231,8 @@ def snapshot_from_dict(d: dict[str, Any]) -> QuotaSnapshot:
             used_percent=raw.get("used_percent"),
             window_minutes=raw.get("window_minutes"),
             reset_at=raw.get("reset_at"),
+            abs_remaining=raw.get("abs_remaining"),
+            abs_unit=raw.get("abs_unit"),
         )
 
     def _credits(raw: Any) -> Optional[Credits]:

@@ -36,7 +36,7 @@ def make_dot_icon(color: QColor, size: int = ICON_SIZE) -> QIcon:
 
 
 def worst_remaining(views: list[ProviderView]) -> Optional[float]:
-    """所有 provider 所有窗口中的最低剩余量；无数据返回 None。"""
+    """所有 provider 的最低剩余量；余额 crit/warn 折算为 5/20 参与取色。"""
     values = []
     for v in views:
         snap = v.state.snapshot
@@ -44,8 +44,14 @@ def worst_remaining(views: list[ProviderView]) -> Optional[float]:
             continue
         for limit in snap.limits:
             for w in (limit.primary, limit.secondary):
-                if w is not None and w.remaining_percent is not None:
+                if w is None:
+                    continue
+                if w.remaining_percent is not None:
                     values.append(w.remaining_percent)
+                elif w.abs_level == "crit":
+                    values.append(5.0)
+                elif w.abs_level == "warn":
+                    values.append(20.0)
     return min(values) if values else None
 
 
@@ -64,9 +70,10 @@ def summary_lines(views: list[ProviderView]) -> list[str]:
             for w in (limit.primary, limit.secondary):
                 if w is None:
                     continue
-                rem = w.remaining_percent
-                if rem is not None:
-                    lines.append(f"{prefix} · {w.label} " + tr("剩 {p}%").format(p=f"{rem:.0f}"))
+                if w.is_balance:
+                    lines.append(f"{prefix} · {w.label} {w.abs_text or '?'}")
+                elif w.remaining_percent is not None:
+                    lines.append(f"{prefix} · {w.label} " + tr("剩 {p}%").format(p=f"{w.remaining_percent:.0f}"))
                 else:
                     lines.append(f"{prefix} · {w.label} " + tr("未知"))
     return lines or [tr("无数据")]
@@ -99,6 +106,8 @@ class QuotaTray(QObject):
         self.action_notify.triggered.connect(self._copy_ntfy_topic)
         self.action_wizard = QAction(tr("初始设置 / 环境自检"), self)
         self.action_wizard.triggered.connect(self._open_wizard)
+        self.action_providers = QAction(tr("管理额度来源"), self)
+        self.action_providers.triggered.connect(self._open_providers)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -109,6 +118,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_phone)
         self._menu.addAction(self.action_notify)
         self._menu.addAction(self.action_wizard)
+        self._menu.addAction(self.action_providers)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -197,6 +207,11 @@ class QuotaTray(QObject):
         from .wizard import SetupWizardDialog
 
         SetupWizardDialog(self._hud._settings, parent=self._hud).exec()
+
+    def _open_providers(self) -> None:
+        from .providers_dialog import ProvidersDialog
+
+        ProvidersDialog(self._hud, parent=self._hud).exec()
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

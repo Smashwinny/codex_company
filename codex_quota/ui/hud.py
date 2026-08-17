@@ -39,7 +39,7 @@ from ..model_info import ModelInfo, read_model_info
 from ..notify import ResetWatcher, notify_resets
 from ..settings import Settings
 from ..state import ProviderView, StateStore, ViewState, default_cache_path
-from .widgets import QuotaBar, threshold_color
+from .widgets import QuotaBar, abs_level_color, threshold_color
 
 REFRESH_INTERVAL_MS = 60_000   # 活跃期自动刷新
 TICK_INTERVAL_MS = 30_000      # 倒计时/新鲜度文本重排
@@ -137,8 +137,16 @@ class _WindowRow(QFrame):
         lay.addWidget(self.countdown)
 
     def bind(self, w: QuotaWindow, now_ts: float, show_countdown: bool = True) -> None:
-        rem = w.remaining_percent
         self.label.setText(w.label)
+        if w.is_balance:
+            # 余额型：无进度条，显示绝对余额文本
+            self.bar.hide()
+            self.pct.setText(w.abs_text or "?")
+            self.pct.setStyleSheet(
+                f"color: {abs_level_color(w.abs_level).name()}; font-weight: bold;")
+            self.countdown.setVisible(False)
+            return
+        rem = w.remaining_percent
         self.bar.set_remaining(rem)
         if rem is None:
             self.pct.setText("?")
@@ -254,6 +262,32 @@ class FloatingHud(QWidget):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+
+    def reload_providers(self) -> None:
+        """按最新 providers.toml 重建 provider 列表（管理对话框保存后调用）。
+
+        同名同类的 provider 复用旧对象（保住 kimi web 保活进程）；
+        被移除/换参（如改了 API key）的旧对象 close 释放资源。
+        """
+        from ..providers import default_providers
+
+        old = {p.name: p for p in self._providers}
+        new_providers = default_providers()
+        for p in list(new_providers):
+            old_p = old.pop(p.name, None)
+            if old_p is not None and type(old_p) is type(p) and \
+                    getattr(old_p, "_api_key", None) == getattr(p, "_api_key", None):
+                new_providers[new_providers.index(p)] = old_p  # 复用
+        for p in old.values():
+            p.close()
+        self._providers = new_providers
+        for p in self._providers:
+            if p.name not in self._stores:
+                store = StateStore(cache_path=default_cache_path(p.name))
+                store.load_cached()
+                self._stores[p.name] = store
+        self._apply()
+        self.refresh()
 
     # ---------- 数据流 ----------
 

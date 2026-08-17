@@ -69,7 +69,13 @@ def _fmt_reset_at(reset_at: Optional[float]) -> str:
     return f"（{t:%m-%d %H:%M}）"
 
 
+def _abs_flag(level: Optional[str]) -> str:
+    return {"crit": "🔴", "warn": "🟡", "ok": "🟢"}.get(level or "", "?")
+
+
 def _render_window(w: QuotaWindow, now: float) -> str:
+    if w.is_balance:
+        return f"{w.label:<6} {w.abs_text or '?':>12}  {_abs_flag(w.abs_level)}"
     rem = w.remaining_percent
     pct = "?" if rem is None else tr("剩 {p}%").format(p=f"{rem:.0f}")
     countdown = _fmt_countdown(w.reset_in_seconds(now)) + _fmt_reset_at(w.reset_at)

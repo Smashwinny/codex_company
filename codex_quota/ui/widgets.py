@@ -26,6 +26,12 @@ def threshold_color(remaining_percent: Optional[float]) -> QColor:
     return COLOR_OK
 
 
+def abs_level_color(level: Optional[str]) -> QColor:
+    """余额型告警等级着色（crit/warn/ok）。"""
+    return {"crit": COLOR_CRIT, "warn": COLOR_WARN, "ok": COLOR_OK}.get(
+        level or "", COLOR_UNKNOWN)
+
+
 class QuotaBar(QWidget):
     """圆角进度条，填充部分表示剩余额度。remaining 为 None 时显示灰色空槽（未知）。"""
 

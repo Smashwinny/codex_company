@@ -108,6 +108,7 @@ class TestQuotaTray:
         assert texts[3] == "复制手机访问地址"
         assert texts[4] == "复制 ntfy 通知主题"
         assert texts[5] == "初始设置 / 环境自检"
+        assert texts[6] == "管理额度来源"
         assert texts[-1] == "退出"
         # 初始无数据 → 摘要一行
         assert any("无数据" in x for x in texts)
@@ -119,7 +120,7 @@ class TestQuotaTray:
         # 校验真实菜单顺序（含分隔符过滤后）
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
         assert texts == ["显示悬浮窗", "立即刷新", "开机自启", "复制手机访问地址",
-                         "复制 ntfy 通知主题", "初始设置 / 环境自检",
+                         "复制 ntfy 通知主题", "初始设置 / 环境自检", "管理额度来源",
                          "Codex · 本周 剩 9%", "Codex GPT-5.3-Codex-Spark · 本周 剩 98%",
                          "退出"]
         assert all(not a.isEnabled() for a in t._summary_actions)

@@ -68,6 +68,8 @@ def views_to_payload(views: list[ProviderView]) -> dict[str, Any]:
                         "label": w.label,
                         "remaining": w.remaining_percent,
                         "reset_at": w.reset_at,
+                        "abs_text": w.abs_text,      # 余额型（无百分比时用）
+                        "abs_level": w.abs_level,
                     })
         providers.append(entry)
     return {"server_time": time.time(), "providers": providers}
@@ -129,6 +131,9 @@ function color(rem) {{
   if (rem == null) return "#8b949e";
   return rem <= {crit} ? "#f85149" : rem <= {warn} ? "#d29922" : "#3fb950";
 }}
+function absColor(level) {{
+  return {{crit: "#f85149", warn: "#d29922", ok: "#3fb950"}}[level] || "#8b949e";
+}}
 function pctText(rem) {{
   if (rem == null) return "?";
   return LANG === "zh" ? "剩 " + Math.round(rem) + "%" : Math.round(rem) + "% left";
@@ -175,11 +180,17 @@ function render(data) {{
           if (bucket) html += `<div class="bucket">── ${{bucket}} ──</div>`;
         }}
         const rem = w.remaining;
-        html += `<div class="wrow"><div class="wtop"><span class="wlabel">${{w.label}}</span>` +
-          `<div class="track"><div class="fill" data-reset="${{w.reset_at||""}}" ` +
-          `style="width:${{rem==null?0:Math.min(rem,100)}}%;background:${{color(rem)}}"></div></div>` +
-          `<span class="pct" style="color:${{color(rem)}}">${{pctText(rem)}}</span></div>` +
-          `<div class="cd" data-cd="${{w.reset_at||""}}">${{cd(w.reset_at)}}</div></div>`;
+        if (w.abs_text) {{
+          // 余额型：无进度条，显示绝对余额
+          html += `<div class="wrow"><div class="wtop"><span class="wlabel">${{w.label}}</span>` +
+            `<span class="pct" style="flex:1;color:${{absColor(w.abs_level)}}">${{w.abs_text}}</span></div></div>`;
+        }} else {{
+          html += `<div class="wrow"><div class="wtop"><span class="wlabel">${{w.label}}</span>` +
+            `<div class="track"><div class="fill" data-reset="${{w.reset_at||""}}" ` +
+            `style="width:${{rem==null?0:Math.min(rem,100)}}%;background:${{color(rem)}}"></div></div>` +
+            `<span class="pct" style="color:${{color(rem)}}">${{pctText(rem)}}</span></div>` +
+            `<div class="cd" data-cd="${{w.reset_at||""}}">${{cd(w.reset_at)}}</div></div>`;
+        }}
       }}
       if (p.stale) html += `<div class="stale">⚠ ${{T.stale}} · ${{T.updated}}${{ago(p.fetched_at)}}</div>`;
     }}

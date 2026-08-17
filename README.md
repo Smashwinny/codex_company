@@ -65,6 +65,26 @@ cd codex_company
   （需要固定域名可接 Cloudflare 账号的 Named Tunnel，后续可加）
 - 关闭手机访问：settings.json 设 `"web_enabled": false`；只关公网隧道：`"tunnel_enabled": false`
 
+### 管理额度来源（providers）
+
+托盘菜单 → **管理额度来源**，无需编辑文件：
+
+- **开关**：勾选/取消 Codex、Kimi、DeepSeek，保存即热重载（不用重启）
+- **DeepSeek**：填入 API key（`sk-…` 或 `$环境变量` 引用，密钥可不进文件），
+  点"测试连接"即时验证，余额以"¥ xx"形式显示（低余额自动变色）
+
+配置文件为 `~/.config/codex-quota/providers.toml`（权限 600），也可手写：
+
+```toml
+[providers.kimi]
+enabled = false
+
+[providers.deepseek]
+type = "deepseek"
+enabled = true
+api_key = "$DEEPSEEK_API_KEY"   # 推荐：引用环境变量
+```
+
 ### 额度重置推送（ntfy）
 
 任一限流窗口的剩余量**重置回 100%** 时，手机立刻收到推送：
@@ -153,6 +173,7 @@ Kimi（套餐: kimi-code/k3）
 - [x] M7 手机查看（内置 Web 服务 + token 鉴权 + 移动端页面）
 - [x] M8 公网访问（cloudflared 隧道，免 root 免注册，4G/外出可看）
 - [x] M9 重置推送（额度回 100% 时 ntfy 通知手机）
+- [x] M10 首启向导 + provider 管理（开关/DeepSeek/余额显示/热重载）
 
 ## 环境变量
 
