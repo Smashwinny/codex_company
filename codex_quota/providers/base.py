@@ -66,6 +66,10 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
                 api_key=section.get("api_key"),
                 display_name=section.get("display_name") or "OpenRouter",
             ))
+        elif section.get("type") == "manual":
+            from .manual import ManualProvider
+
+            providers.append(ManualProvider.from_section(section))
 
     filt = os.environ.get("CODEX_QUOTA_PROVIDERS")
     if filt:

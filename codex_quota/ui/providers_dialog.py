@@ -7,11 +7,13 @@
 
 from __future__ import annotations
 
+import time
 from typing import Optional, Type
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -26,6 +28,7 @@ from ..i18n import tr
 from ..providers.config import load_providers_config, save_providers_config
 from ..providers.deepseek import DeepSeekProvider
 from ..providers.openrouter import OpenRouterProvider
+from ..state import StateStore
 from .theme import DIALOG_STYLE, FG_DIM, style_section
 
 # 密钥型 provider 声明：新增同类服务在此处加一行 + base.py 装配一行
@@ -150,6 +153,40 @@ class ProvidersDialog(QDialog):
             self._rows[spec["type"]] = row
             lay.addWidget(row)
 
+        # --- 手动余额（免 key） ---
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: #30363d;")
+        lay.addWidget(sep2)
+        manual_label = QLabel(style_section(tr("手动余额（免 key）")))
+        manual_label.setTextFormat(_Qt.TextFormat.RichText)
+        lay.addWidget(manual_label)
+        m = cfg.get("manual", {})
+        self._manual_cb = QCheckBox(tr("手动余额（适合网页版用户，定期手填）"))
+        self._manual_cb.setChecked(bool(m.get("enabled", True)) and bool(m))
+        lay.addWidget(self._manual_cb)
+        m_row = QHBoxLayout()
+        self._manual_name = QLineEdit(str(m.get("display_name") or "DeepSeek（手动）"))
+        self._manual_name.setPlaceholderText(tr("显示名称"))
+        self._manual_amount = QLineEdit(
+            "" if m.get("balance") is None else str(m.get("balance")))
+        self._manual_amount.setPlaceholderText(tr("当前余额，如 23.5"))
+        self._manual_amount.setMaximumWidth(140)
+        self._manual_unit = QComboBox()
+        self._manual_unit.addItems(["CNY", "USD", "credits"])
+        self._manual_unit.setCurrentText(str(m.get("unit") or "CNY"))
+        self._manual_unit.setMaximumWidth(90)
+        m_row.addWidget(self._manual_name, stretch=1)
+        m_row.addWidget(self._manual_amount)
+        m_row.addWidget(self._manual_unit)
+        lay.addLayout(m_row)
+        updated = m.get("updated_at")
+        info = (tr("上次填写：{t}").format(t=StateStore.freshness_text(float(updated)))
+                if isinstance(updated, (int, float)) else tr("从未填写"))
+        self._manual_info = QLabel(info)
+        self._manual_info.setProperty("dim", True)
+        lay.addWidget(self._manual_info)
+
         # --- 按钮 ---
         btns = QHBoxLayout()
         btns.addStretch(1)
@@ -182,6 +219,30 @@ class ProvidersDialog(QDialog):
                 }
             else:
                 cfg.pop(spec["type"], None)
+        # 手动余额：填写新金额则刷新 updated_at；留空保留旧值
+        if self._manual_cb.isChecked():
+            prev = cfg.get("manual", {})
+            amount_text = self._manual_amount.text().strip()
+            try:
+                balance: Optional[float] = float(amount_text) if amount_text else None
+            except ValueError:
+                balance = None
+            if balance is not None:
+                updated_at = time.time()
+            else:
+                balance = prev.get("balance") if isinstance(
+                    prev.get("balance"), (int, float)) else None
+                updated_at = prev.get("updated_at")
+            cfg["manual"] = {
+                "type": "manual",
+                "enabled": True,
+                "display_name": self._manual_name.text().strip() or "手动余额",
+                "balance": balance,
+                "unit": self._manual_unit.currentText(),
+                "updated_at": updated_at,
+            }
+        else:
+            cfg.pop("manual", None)
         save_providers_config(cfg)
         self._hud.reload_providers()
         self.accept()
