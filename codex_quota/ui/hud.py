@@ -35,6 +35,7 @@ from ..cli import error_hint
 from ..fetcher import QuotaFetcher, RefreshScheduler
 from ..i18n import tr
 from ..model_info import ModelInfo, read_model_info
+from ..notify import ResetWatcher, notify_resets
 from ..settings import Settings
 from ..state import ProviderView, StateStore, ViewState, default_cache_path
 from .widgets import QuotaBar, threshold_color
@@ -172,6 +173,8 @@ class FloatingHud(QWidget):
         }
         self._scheduler = RefreshScheduler()
         self._settings = Settings()
+        self._watcher = ResetWatcher()
+        self.notifier = None  # NtfyNotifier，由 __main__ 装配（None=不推送）
         self._fetcher: Optional[QuotaFetcher] = None
         self._any_success = False
         self._drag_pos: Optional[QPoint] = None
@@ -278,6 +281,9 @@ class FloatingHud(QWidget):
     def _on_success(self, provider: str, snap: QuotaSnapshot) -> None:
         self._any_success = True
         self._stores[provider].on_success(snap)
+        display = next((p.display_name for p in self._providers if p.name == provider),
+                       provider)
+        notify_resets(self.notifier, self._watcher, provider, display, snap)
         self._apply()
 
     def _on_error(self, provider: str, message: str) -> None:

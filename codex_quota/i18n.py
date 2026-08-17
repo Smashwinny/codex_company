@@ -50,6 +50,9 @@ _EN: dict[str, str] = {
     "开机自启": "Launch at login",
     "复制手机访问地址": "Copy phone access URL",
     "手机与电脑同一局域网，浏览器打开即看": "Open in phone browser on the same LAN",
+    "复制 ntfy 通知主题": "Copy ntfy notify topic",
+    "手机 ntfy App 订阅此主题，额度重置时收推送":
+        "Subscribe in ntfy app to get push when quota resets",
     "退出": "Quit",
     "Codex 额度": "Codex Quota",
     "未知": "unknown",

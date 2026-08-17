@@ -94,6 +94,9 @@ class QuotaTray(QObject):
         self.action_phone = QAction(tr("复制手机访问地址"), self)
         self.action_phone.setToolTip(tr("手机与电脑同一局域网，浏览器打开即看"))
         self.action_phone.triggered.connect(self._copy_phone_url)
+        self.action_notify = QAction(tr("复制 ntfy 通知主题"), self)
+        self.action_notify.setToolTip(tr("手机 ntfy App 订阅此主题，额度重置时收推送"))
+        self.action_notify.triggered.connect(self._copy_ntfy_topic)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -102,6 +105,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_refresh)
         self._menu.addAction(self.action_autostart)
         self._menu.addAction(self.action_phone)
+        self._menu.addAction(self.action_notify)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -177,6 +181,14 @@ class QuotaTray(QObject):
             if lan and lan != url:
                 tips.append(lan)
             self.action_phone.setToolTip("\n".join(tips))  # 悬停可见全部地址
+
+    def _copy_ntfy_topic(self) -> None:
+        from PyQt6.QtGui import QGuiApplication
+
+        notifier = getattr(self._hud, "notifier", None)
+        if notifier is not None and notifier.topic:
+            QGuiApplication.clipboard().setText(notifier.topic)
+            self.action_notify.setToolTip(notifier.subscribe_url)
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

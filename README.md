@@ -61,6 +61,18 @@ cd codex_company
   （需要固定域名可接 Cloudflare 账号的 Named Tunnel，后续可加）
 - 关闭手机访问：settings.json 设 `"web_enabled": false`；只关公网隧道：`"tunnel_enabled": false`
 
+### 额度重置推送（ntfy）
+
+任一限流窗口的剩余量**重置回 100%** 时，手机立刻收到推送：
+
+1. 手机装 **ntfy** App（Android/iOS，免费无需注册）
+2. 订阅本机主题（托盘菜单"复制 ntfy 通知主题"，或看日志里的 `手机通知:` 行）
+3. 完成。此后 Codex/Kimi 任一窗口重置回满即推送，只在跳变时触发、不重复骚扰
+
+- 检测原理：每次刷新对比剩余量，从 <99.5% 跳到 ≥99.5% 视为重置
+- 关闭：settings.json 设 `"notify_enabled": false`；换服务器：`ntfy_server`（可自建）
+- 主题即凭证，勿外传
+
 ### 只要 CLI（无 GUI 依赖）
 
 CLI 模式只用 Python 标准库，不装 PyQt6 也能跑：
@@ -136,6 +148,7 @@ Kimi（套餐: kimi-code/k3）
 - [x] M6 多模型用量（Codex + Kimi 双 provider 分区显示）
 - [x] M7 手机查看（内置 Web 服务 + token 鉴权 + 移动端页面）
 - [x] M8 公网访问（cloudflared 隧道，免 root 免注册，4G/外出可看）
+- [x] M9 重置推送（额度回 100% 时 ntfy 通知手机）
 
 ## 环境变量
 

@@ -24,6 +24,9 @@ DEFAULTS: dict[str, Any] = {
     "web_port": 8642,      # Web 服务起始端口（冲突自动递增）
     "web_token": None,     # URL 鉴权 token，首次运行生成后持久化
     "tunnel_enabled": True,  # cloudflared 公网隧道（任意网络可访问）
+    "notify_enabled": True,  # 额度重置回 100% 时推送手机通知（ntfy）
+    "ntfy_server": "https://ntfy.sh",
+    "ntfy_topic": None,      # ntfy 订阅主题，首次运行生成后持久化（主题即凭证）
 }
 
 

@@ -72,6 +72,19 @@ def _run_hud(args: list[str]) -> int:
                 print(f"公网隧道不可用（仅局域网访问）: {exc}", file=sys.stderr)
                 tunnel = None
 
+    # 额度重置推送：ntfy 主题（主题即凭证，自动生成持久化）
+    if settings.get("notify_enabled"):
+        from .notify import NtfyNotifier
+        from .web import generate_token
+
+        topic = settings.get("ntfy_topic")
+        if not topic:
+            topic = "codex-quota-" + generate_token()[:12]
+            settings.set("ntfy_topic", topic)
+        hud.notifier = NtfyNotifier(server=settings.get("ntfy_server"), topic=topic)
+        print(f"手机通知: ntfy App 订阅主题 {topic}（{hud.notifier.subscribe_url}）",
+              file=sys.stderr)
+
     if QSystemTrayIcon.isSystemTrayAvailable():
         from .ui.tray import QuotaTray
 
