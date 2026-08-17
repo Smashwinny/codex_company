@@ -70,8 +70,11 @@ _EN: dict[str, str] = {
     "初始设置 / 环境自检": "Setup / Environment check",
     # provider 管理
     "管理额度来源": "Manage providers",
+    "本地工具": "Local tools",
+    "云端服务（API key）": "Cloud services (API key)",
     "Codex（本地 codex CLI）": "Codex (local codex CLI)",
     "Kimi（本地 kimi CLI）": "Kimi (local kimi CLI)",
+    "Claude Code（本地登录凭证）": "Claude Code (local credentials)",
     "API key（sk-… 或 $环境变量）": "API key (sk-… or $ENV_VAR)",
     "测试连接": "Test connection",
     "测试中…": "Testing…",

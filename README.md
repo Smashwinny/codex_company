@@ -69,9 +69,19 @@ cd codex_company
 
 托盘菜单 → **管理额度来源**，无需编辑文件：
 
-- **开关**：勾选/取消 Codex、Kimi、DeepSeek，保存即热重载（不用重启）
-- **DeepSeek**：填入 API key（`sk-…` 或 `$环境变量` 引用，密钥可不进文件），
-  点"测试连接"即时验证，余额以"¥ xx"形式显示（低余额自动变色）
+- **本地工具**（开关即可）：Codex、Kimi、Claude Code（自动读本地登录凭证）
+- **云端服务**（填 API key）：DeepSeek、OpenRouter——key 可填 `$环境变量` 引用，
+  点"测试连接"即时验证，保存即热重载（不用重启）
+
+各服务显示形态：
+
+| 服务 | 数据来源 | 显示 |
+|------|----------|------|
+| Codex | 本地 `codex app-server` JSON-RPC | 5小时/本周窗口 % |
+| Kimi | 本地 `kimi web` `/api/v1/oauth/usage` | 5小时/本周窗口 % |
+| Claude Code | `api.anthropic.com/api/oauth/usage`（本地 OAuth token） | 5小时/本周窗口 % |
+| DeepSeek | `api.deepseek.com/user/balance` | 余额 ¥xx |
+| OpenRouter | `openrouter.ai/api/v1/credits` | 已用 % + 余额 $xx |
 
 配置文件为 `~/.config/codex-quota/providers.toml`（权限 600），也可手写：
 
@@ -83,6 +93,11 @@ enabled = false
 type = "deepseek"
 enabled = true
 api_key = "$DEEPSEEK_API_KEY"   # 推荐：引用环境变量
+
+[providers.openrouter]
+type = "openrouter"
+enabled = true
+api_key = "$OPENROUTER_API_KEY"
 ```
 
 ### 额度重置推送（ntfy）

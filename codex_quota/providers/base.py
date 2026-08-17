@@ -31,9 +31,11 @@ class Provider(Protocol):
 
 
 def default_providers(config_path: str | None = None) -> list[Provider]:
+    from .claude_code import ClaudeCodeProvider, credentials_path
     from .codex import CodexProvider
     from .deepseek import DeepSeekProvider
     from .kimi import KimiProvider, find_kimi_bin
+    from .openrouter import OpenRouterProvider
 
     cfg = load_providers_config(config_path)
 
@@ -43,15 +45,26 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     providers: list[Provider] = []
     if enabled("codex"):
         providers.append(CodexProvider())
+    # 本地凭证存在则自动启用；配置显式声明也加载（无凭证时显示引导错误）
+    if enabled("claude") and (credentials_path() is not None
+                              or cfg.get("claude", {}).get("type") == "claude"):
+        providers.append(ClaudeCodeProvider())
     if enabled("kimi") and find_kimi_bin() is not None:
         providers.append(KimiProvider())
 
-    # 配置中的预设 provider（当前支持 deepseek）
+    # 配置中的密钥型预设 provider
     for name, section in cfg.items():
-        if section.get("type") == "deepseek" and section.get("enabled", True):
+        if not section.get("enabled", True):
+            continue
+        if section.get("type") == "deepseek":
             providers.append(DeepSeekProvider(
                 api_key=section.get("api_key"),
                 display_name=section.get("display_name") or "DeepSeek",
+            ))
+        elif section.get("type") == "openrouter":
+            providers.append(OpenRouterProvider(
+                api_key=section.get("api_key"),
+                display_name=section.get("display_name") or "OpenRouter",
             ))
 
     filt = os.environ.get("CODEX_QUOTA_PROVIDERS")
