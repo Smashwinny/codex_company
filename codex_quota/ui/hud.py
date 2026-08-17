@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import logging
 import time
 from typing import Optional
 
@@ -71,6 +72,8 @@ BADGE_NORMAL_STYLE = (
     "border-radius: 8px; padding: 0px 7px; font-size: 10px;"
 )
 EFFORT_COLORS = {"low": "#3fb950", "medium": "#d29922", "high": "#f85149", "xhigh": "#f85149"}
+
+logger = logging.getLogger("codex_quota.hud")
 
 
 def _badge_html(info: ModelInfo) -> str:
@@ -280,7 +283,10 @@ class FloatingHud(QWidget):
 
     def _on_success(self, provider: str, snap: QuotaSnapshot) -> None:
         self._any_success = True
+        had_error = self._stores[provider].state.error is not None
         self._stores[provider].on_success(snap)
+        if had_error:
+            logger.info("provider %s 已恢复", provider)
         display = next((p.display_name for p in self._providers if p.name == provider),
                        provider)
         notify_resets(self.notifier, self._watcher, provider, display, snap)

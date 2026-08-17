@@ -11,6 +11,7 @@ import pytest
 from codex_quota.app_server import (
     AppServerError,
     QuotaWindow,
+    find_codex_bin,
     parse_rate_limits_response,
 )
 
@@ -145,3 +146,39 @@ class TestEdgeCases:
                                            "resetsAt": NOW}}}
         snap = parse_rate_limits_response(resp, now=NOW)
         assert len(snap.limits) == 1
+
+
+class TestFindCodexBin:
+    def test_nvm_fallback(self, tmp_path, monkeypatch):
+        """PATH 没有 codex 时，回退搜索 ~/.nvm/versions/node/*/bin/codex。"""
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr("shutil.which", lambda _: None)
+        fake_home = tmp_path / "home"
+        bin_dir = fake_home / ".nvm" / "versions" / "node" / "v20.20.2" / "bin"
+        bin_dir.mkdir(parents=True)
+        codex = bin_dir / "codex"
+        codex.write_text("#!/bin/sh\n")
+        codex.chmod(0o755)
+        monkeypatch.setattr("os.path.expanduser", lambda p: str(fake_home) + p[1:])
+        assert find_codex_bin() == str(codex)
+
+    def test_nvm_fallback_prefers_newer_version(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr("shutil.which", lambda _: None)
+        fake_home = tmp_path / "home"
+        for ver in ("v20.20.2", "v24.19.0"):
+            d = fake_home / ".nvm" / "versions" / "node" / ver / "bin"
+            d.mkdir(parents=True)
+            (d / "codex").write_text("#!/bin/sh\n")
+            (d / "codex").chmod(0o755)
+        monkeypatch.setattr("os.path.expanduser", lambda p: str(fake_home) + p[1:])
+        assert "v24.19.0" in find_codex_bin()
+
+    def test_not_found_anywhere(self, tmp_path, monkeypatch):
+        from codex_quota.app_server import CodexNotFoundError
+
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr("shutil.which", lambda _: None)
+        monkeypatch.setattr("os.path.expanduser", lambda p: str(tmp_path) + p[1:])
+        with pytest.raises(CodexNotFoundError):
+            find_codex_bin()

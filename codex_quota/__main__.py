@@ -29,6 +29,16 @@ def _run_hud(args: list[str]) -> int:
         )
         return 69  # EX_UNAVAILABLE
 
+    import logging
+
+    # 日志进 stderr → 启动器重定向到 ~/.cache/codex-quota/hud.log
+    logging.basicConfig(
+        stream=sys.stderr,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%m-%d %H:%M:%S",
+    )
+
     from .providers import default_providers
     from .ui import FloatingHud
 

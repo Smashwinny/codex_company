@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import queue
 import re
@@ -21,6 +22,8 @@ import time
 from typing import Optional
 
 TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+
+logger = logging.getLogger("codex_quota.tunnel")
 
 
 class TunnelError(Exception):
@@ -69,7 +72,12 @@ class Tunnel:
         def _pump() -> None:
             assert self._proc is not None and self._proc.stderr is not None
             for line in self._proc.stderr:
+                if " ERR " in line or line.startswith("ERR"):
+                    logger.warning("cloudflared: %s", line.strip())
                 lines.put(line)
+            # stderr 关闭 = 进程退出；若非主动 stop，说明隧道意外断了
+            if self._proc is not None:
+                logger.warning("cloudflared 进程意外退出，公网地址已失效")
 
         threading.Thread(target=_pump, daemon=True).start()
 
@@ -84,6 +92,7 @@ class Tunnel:
             m = TUNNEL_URL_RE.search(line)
             if m:
                 self.public_url = m.group(0)
+                logger.info("cloudflared 隧道已建立: %s", self.public_url)
                 return self.public_url
         self.stop()
         raise TunnelError("cloudflared 启动超时或未输出公网地址")

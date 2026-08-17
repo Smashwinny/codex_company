@@ -15,6 +15,7 @@ used/limit*100 → used_percent；ISO8601 reset_at → Unix 秒。
 from __future__ import annotations
 
 import json
+import logging
 import os
 import queue
 import re
@@ -30,6 +31,8 @@ from datetime import datetime
 from typing import Any, Optional
 
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
+
+logger = logging.getLogger("codex_quota.kimi")
 
 TOKEN_RE = re.compile(r"Token:\s+(\S+)")
 UNIT_MINUTES = {"minute": 1, "hour": 60, "day": 1440, "week": 10080}
@@ -167,6 +170,7 @@ class KimiProvider:
             if m:
                 self._token = m.group(1)
                 self._base_url = f"http://127.0.0.1:{port}"
+                logger.info("kimi web 已启动（端口 %s）", port)
                 return
         self.close()
         raise KimiError("kimi web 启动超时或未输出 Token")
@@ -199,8 +203,10 @@ class KimiProvider:
         """重启保活服务器。带冷却：频繁重启会反复拉进程，必须限流。"""
         now = time.monotonic()
         if now - self._last_restart < self._restart_cooldown:
+            logger.info("kimi web 重启冷却中，跳过本次重启")
             raise KimiError("kimi web 无响应（重启冷却中，稍后自动恢复）")
         self._last_restart = now
+        logger.warning("kimi web 连接失败，重启服务器")
         self.close()
         self._base_url = self._token = None
         self._ensure_server()

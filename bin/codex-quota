@@ -15,7 +15,7 @@ fi
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-quota"
 mkdir -p "$LOG_DIR"
 
-if pgrep -f "[-]m codex_quota" >/dev/null 2>&1; then
+if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
     echo "codex-quota 已在运行"
     exit 0
 fi

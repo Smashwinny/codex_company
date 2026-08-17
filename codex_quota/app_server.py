@@ -99,19 +99,34 @@ class QuotaSnapshot:
 
 
 def find_codex_bin() -> str:
-    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖。"""
+    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖。
+
+    PATH 找不到时回退搜索 nvm 版本目录——nvm 切换默认 Node 版本后，
+    装在旧版本全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，
+    nvm 切到 v24 后"未找到 codex"）。
+    """
     override = os.environ.get("CODEX_BIN")
     if override:
         if os.path.isfile(override) and os.access(override, os.X_OK):
             return override
         raise CodexNotFoundError(f"CODEX_BIN 指向的文件不可执行: {override}")
     path = shutil.which("codex")
-    if path is None:
-        raise CodexNotFoundError(
-            "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
-            "或设置 CODEX_BIN 环境变量。"
-        )
-    return path
+    if path is not None:
+        return path
+    import glob
+
+    nvm_candidates = sorted(
+        glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions", "node",
+                               "*", "bin", "codex")),
+        reverse=True,  # 版本号大的优先
+    )
+    for candidate in nvm_candidates:
+        if os.access(candidate, os.X_OK):
+            return candidate
+    raise CodexNotFoundError(
+        "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
+        "或设置 CODEX_BIN 环境变量。"
+    )
 
 
 def codex_home() -> str:

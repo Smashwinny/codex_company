@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from typing import Optional
@@ -16,6 +17,8 @@ from typing import Optional
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .app_server import codex_home
+
+logger = logging.getLogger("codex_quota.fetcher")
 
 
 class QuotaFetcher(QThread):
@@ -30,10 +33,18 @@ class QuotaFetcher(QThread):
     def run(self) -> None:
         # 顺序查询各 provider；单个失败不影响其他
         for p in self._providers:
+            t0 = time.monotonic()
             try:
-                self.succeeded.emit(p.name, p.fetch())
+                snap = p.fetch()
             except Exception as exc:  # 兜底：任何意外都不能让线程裸崩
+                logger.warning("provider %s 查询失败（%.1fs）: %s",
+                               p.name, time.monotonic() - t0, exc)
                 self.failed.emit(p.name, str(exc))
+                continue
+            elapsed = time.monotonic() - t0
+            if elapsed > 5:
+                logger.info("provider %s 查询缓慢: %.1fs", p.name, elapsed)
+            self.succeeded.emit(p.name, snap)
 
 
 ACTIVE_MS = 60_000        # 窗口可见
