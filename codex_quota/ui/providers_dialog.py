@@ -23,9 +23,7 @@ from PyQt6.QtWidgets import (
 from ..i18n import tr
 from ..providers.config import load_providers_config, save_providers_config
 from ..providers.deepseek import DeepSeekProvider
-
-FG = "#e6edf3"
-FG_DIM = "#8b949e"
+from .theme import DIALOG_STYLE, FG_DIM
 
 
 class _TestRunner(QThread):
@@ -51,7 +49,7 @@ class ProvidersDialog(QDialog):
         self.setWindowTitle(tr("管理额度来源"))
         self.setModal(True)
         self.setMinimumWidth(520)
-        self.setStyleSheet(f"QDialog {{ background: #0d1117; color: {FG}; }}")
+        self.setStyleSheet(DIALOG_STYLE)
         self._hud = hud
         self._runner: Optional[_TestRunner] = None
 
@@ -96,6 +94,7 @@ class ProvidersDialog(QDialog):
         cancel = QPushButton(tr("取消"))
         cancel.clicked.connect(self.reject)
         save = QPushButton(tr("保存"))
+        save.setProperty("primary", True)
         save.setDefault(True)
         save.clicked.connect(self._save)
         btns.addWidget(cancel)

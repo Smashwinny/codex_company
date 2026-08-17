@@ -56,6 +56,8 @@ _EN: dict[str, str] = {
         "Subscribe in ntfy app to get push when quota resets",
     # 首启向导 / 自检
     "codex-quota 初始设置": "codex-quota Setup",
+    "检测运行环境，缺失项一键复制修复命令":
+        "Checking your environment — copy fix commands with one click",
     "环境检测": "Environment check",
     "可选功能": "Optional features",
     "全部重新检测": "Re-check all",
