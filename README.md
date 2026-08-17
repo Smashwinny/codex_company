@@ -42,6 +42,10 @@ cd codex_company
 | 命令行 | `./bin/codex-quota`（脱离终端后台运行，关终端不影响） |
 | 开机自启 | 启动后在托盘菜单勾选"开机自启" |
 
+**首次启动会弹出设置向导**：自动检测 Codex CLI（安装/登录）、Kimi、cloudflared，
+缺失项旁边直接给"复制命令"按钮，修好点"全部重新检测"即可，全程不用查文档。
+之后随时可从托盘菜单"初始设置 / 环境自检"重新打开。
+
 - 停止：`pkill -f "m codex_quota"`（或托盘菜单 → 退出）
 - 日志：`~/.cache/codex-quota/hud.log`
 - 设置：`~/.config/codex-quota/settings.json`（透明度/紧凑模式/位置）

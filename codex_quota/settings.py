@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "notify_enabled": True,  # 额度重置回 100% 时推送手机通知（ntfy）
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": None,      # ntfy 订阅主题，首次运行生成后持久化（主题即凭证）
+    "wizard_done": False,    # 首启向导是否已完成
 }
 
 

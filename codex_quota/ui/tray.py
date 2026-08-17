@@ -97,6 +97,8 @@ class QuotaTray(QObject):
         self.action_notify = QAction(tr("复制 ntfy 通知主题"), self)
         self.action_notify.setToolTip(tr("手机 ntfy App 订阅此主题，额度重置时收推送"))
         self.action_notify.triggered.connect(self._copy_ntfy_topic)
+        self.action_wizard = QAction(tr("初始设置 / 环境自检"), self)
+        self.action_wizard.triggered.connect(self._open_wizard)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -106,6 +108,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_autostart)
         self._menu.addAction(self.action_phone)
         self._menu.addAction(self.action_notify)
+        self._menu.addAction(self.action_wizard)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -189,6 +192,11 @@ class QuotaTray(QObject):
         if notifier is not None and notifier.topic:
             QGuiApplication.clipboard().setText(notifier.topic)
             self.action_notify.setToolTip(notifier.subscribe_url)
+
+    def _open_wizard(self) -> None:
+        from .wizard import SetupWizardDialog
+
+        SetupWizardDialog(self._hud._settings, parent=self._hud).exec()
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

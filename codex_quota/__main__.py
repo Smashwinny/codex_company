@@ -47,11 +47,17 @@ def _run_hud(args: list[str]) -> int:
     providers = default_providers()
     hud = FloatingHud(providers)
     hud.restore_position()
+    settings = hud._settings
+
+    # 首启向导：环境检测 + 修复引导（先于 web/隧道/通知初始化，勾选结果即生效）
+    from .ui.wizard import SetupWizardDialog, should_show_wizard
+
+    if should_show_wizard(settings):
+        SetupWizardDialog(settings, parent=hud).exec()
 
     # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）+ 可选公网隧道
     web_server = None
     tunnel = None
-    settings = hud._settings
     if settings.get("web_enabled"):
         from .web import WebServer, generate_token
 
