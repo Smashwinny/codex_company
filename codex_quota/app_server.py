@@ -20,7 +20,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-DEFAULT_TIMEOUT = 8.0  # 秒；超时即 kill 子进程
+DEFAULT_TIMEOUT = 15.0  # 秒；超时即 kill 子进程（云端查询实测 2-8s，8s 太紧）
 CLIENT_INFO = {"name": "codex-quota", "version": "0.1.0"}
 
 

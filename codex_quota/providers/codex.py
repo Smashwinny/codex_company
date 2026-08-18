@@ -9,7 +9,7 @@ class CodexProvider:
     name = "codex"
     display_name = "Codex"
 
-    def __init__(self, timeout: float = 8.0):
+    def __init__(self, timeout: float = 15.0):
         self._timeout = timeout
 
     def fetch(self) -> QuotaSnapshot:

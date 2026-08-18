@@ -128,7 +128,7 @@ def error_hint(message: str) -> Optional[str]:
 def run_cli(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="codex_quota", description="额度查询（CLI 模式）")
     parser.add_argument("--json", action="store_true", help="以 JSON 输出")
-    parser.add_argument("--timeout", type=float, default=8.0, help="单 provider 查询超时秒数")
+    parser.add_argument("--timeout", type=float, default=15.0, help="单 provider 查询超时秒数")
     args = parser.parse_args(argv)
 
     from .providers import default_providers
