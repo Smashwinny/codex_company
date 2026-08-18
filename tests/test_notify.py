@@ -105,7 +105,7 @@ class TestNtfyNotifier:
         req = _Capture.requests[0]
         assert req["path"] == "/my-topic"
         assert req["title"] == "codex-quota"   # Title 保持 ASCII
-        assert req["priority"] == "high"
+        assert req["priority"] == "urgent"
         assert "重置回 100%" in req["body"]    # 中文在正文
 
     def test_empty_topic_noop(self, server):

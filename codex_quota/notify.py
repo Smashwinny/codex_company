@@ -55,8 +55,10 @@ class NtfyNotifier:
     def subscribe_url(self) -> str:
         return f"{self.server}/{self.topic}"
 
-    def publish(self, title: str, body: str, *, priority: str = "high",
+    def publish(self, title: str, body: str, *, priority: str = "urgent",
                 tags: str = "white_check_mark") -> bool:
+        """发推送。priority 默认 urgent(5)：额度重置/地址变更都是用户要立刻知道的事，
+        且 ntfy App 可按优先级过滤提醒（用户设最高提醒时只有 urgent 会响）。"""
         if not self.topic:
             return False
         req = urllib.request.Request(
