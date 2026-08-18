@@ -30,6 +30,23 @@ class TunnelError(Exception):
     pass
 
 
+class RestartPolicy:
+    """隧道重启限流：滑动窗口内最多 max_attempts 次，防止断网期间疯狂重试。"""
+
+    def __init__(self, max_attempts: int = 5, window_s: float = 600.0):
+        self._max = max_attempts
+        self._window = window_s
+        self._times: list[float] = []
+
+    def allow(self, now: Optional[float] = None) -> bool:
+        now = now if now is not None else time.monotonic()
+        self._times = [t for t in self._times if now - t < self._window]
+        if len(self._times) >= self._max:
+            return False
+        self._times.append(now)
+        return True
+
+
 def find_cloudflared() -> Optional[str]:
     """定位 cloudflared：PATH → 项目 vendor/bin/。找不到返回 None（仅局域网模式）。"""
     found = shutil.which("cloudflared")
@@ -54,6 +71,10 @@ class Tunnel:
     @property
     def available(self) -> bool:
         return self._bin is not None
+
+    def is_alive(self) -> bool:
+        """隧道进程是否存活（看门狗用）。"""
+        return self._proc is not None and self._proc.poll() is None
 
     def start(self) -> str:
         if self._bin is None:

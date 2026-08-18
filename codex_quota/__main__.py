@@ -31,6 +31,8 @@ def _run_hud(args: list[str]) -> int:
 
     import logging
 
+    from PyQt6.QtCore import QTimer
+
     # 日志进 stderr → 启动器重定向到 ~/.cache/codex-quota/hud.log
     logging.basicConfig(
         stream=sys.stderr,
@@ -41,6 +43,13 @@ def _run_hud(args: list[str]) -> int:
 
     from .providers import default_providers
     from .ui import FloatingHud
+
+    # 清扫上轮异常退出遗留的子进程（kill -9/断电场景兜底）
+    from .janitor import cleanup_orphans
+
+    swept = cleanup_orphans()
+    if swept:
+        logging.getLogger("codex_quota").info("清理上轮遗留进程 %d 个", swept)
 
     app = QApplication([sys.argv[0], *args])
     app.setApplicationName("codex-quota")
@@ -113,6 +122,51 @@ def _run_hud(args: list[str]) -> int:
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
     hud.show()
+
+    # 隧道看门狗：cloudflared 死亡 → 限流自动重连 → ntfy 推送新地址
+    if tunnel is not None:
+        import threading
+
+        from .tunnel import RestartPolicy
+
+        _policy = RestartPolicy()
+        _log = logging.getLogger("codex_quota")
+        _restart_busy = threading.Event()
+
+        def _restart_tunnel():
+            try:
+                _log.warning("cloudflared 已退出，尝试自动重连")
+                if not _policy.allow():
+                    _log.warning("隧道重连过于频繁，进入冷却（10 分钟内最多 5 次）")
+                    return
+                try:
+                    base = tunnel.start()
+                except Exception as exc:
+                    _log.warning("隧道重连失败: %s", exc)
+                    return
+                hud.public_url = f"{base}/t/{token}/"
+                print(f"手机访问(公网): {hud.public_url}", file=sys.stderr)
+                if hud.notifier is not None:
+                    hud.notifier.publish(
+                        "codex-quota",
+                        f"📱 手机访问新地址（隧道已重连）：\n{hud.public_url}",
+                        tags="link")
+            finally:
+                _restart_busy.clear()
+
+        def _check_tunnel():
+            # start() 会阻塞数秒，放后台线程避免卡 UI
+            if tunnel.is_alive() or _restart_busy.is_set():
+                return
+            _restart_busy.set()
+            threading.Thread(target=_restart_tunnel, daemon=True).start()
+
+        _tunnel_watchdog = QTimer()
+        _tunnel_watchdog.setInterval(30_000)
+        _tunnel_watchdog.timeout.connect(_check_tunnel)
+        _tunnel_watchdog.start()
+        hud._tunnel_watchdog = _tunnel_watchdog  # 防 GC
+
     # 优雅退出：SIGTERM/SIGINT → 正常退出事件循环，finally 回收子进程
     # （kimi web / cloudflared 都在独立进程组，主进程被杀不会连带，必须主动清理）
     import signal
@@ -125,8 +179,6 @@ def _run_hud(args: list[str]) -> int:
     signal.signal(signal.SIGINT, _graceful_quit)
     # Python 信号处理器只在解释器执行字节码时运行，app.exec() 阻塞在 C++ 层；
     # 用空 QTimer 周期唤醒解释器，让挂起的信号处理器得以及时执行
-    from PyQt6.QtCore import QTimer
-
     _sig_timer = QTimer()
     _sig_timer.start(500)
     _sig_timer.timeout.connect(lambda: None)
