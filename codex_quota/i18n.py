@@ -29,6 +29,7 @@ _EN: dict[str, str] = {
     "无数据": "No data",
     # 页脚/状态
     "更新于 {f}": "Updated {f}",
+    "⚠ 数据陈旧 · 更新于 {f}": "⚠ Stale · updated {f}",
     "⚠ 数据陈旧（更新于 {f}）：{e}": "⚠ Stale (updated {f}): {e}",
     "加载中…": "Loading…",
     # 额度行

@@ -54,18 +54,23 @@ class TestHudSmoke:
         # 主窗口一行 + Spark 一行
         assert len(hud._rows) == 2
         assert "剩 9%" in hud._rows[0][0].pct.text()
-        assert "更新于" in hud._footer.text()
+        # 分区自己的新鲜度行
+        assert len(hud._fresh_labels) == 1
+        assert "更新于" in hud._fresh_labels[0][0].text()
+        assert hud._footer.isHidden()  # 有数据时全局页脚隐藏
 
     def test_error_without_history(self, hud):
         hud._stores["codex"].on_error("app-server 响应超时（8 秒）")
         hud._apply()
         assert "超时" in hud._footer.text()
+        assert not hud._footer.isHidden()  # 全无数据时页脚显示错误
 
     def test_error_with_history_marks_stale(self, hud):
         hud._stores["codex"].on_success(snap())
         hud._stores["codex"].on_error("no-response")
         hud._apply()
-        assert "数据陈旧" in hud._footer.text()
+        # 陈旧标记在该分区自己的新鲜度行上
+        assert "数据陈旧" in hud._fresh_labels[0][0].text()
         assert len(hud._rows) == 2  # 旧数据仍在
 
     def test_retick_updates_countdown(self, hud):
@@ -182,7 +187,7 @@ class TestInteractions:
         QTest.mouseClick(live_hud._refresh_btn, Qt.MouseButton.LeftButton)
         assert len(live_hud._rows) == 2  # 重新构建
         assert live_hud._refresh_btn.isEnabled()  # finished 后恢复可用
-        assert "更新于" in live_hud._footer.text()
+        assert "更新于" in live_hud._fresh_labels[0][0].text()
 
     def test_refresh_after_delete_later_no_crash(self, live_hud):
         """回归：fetcher deleteLater 后再次刷新不得访问悬垂引用（曾致崩溃）。"""

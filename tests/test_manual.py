@@ -14,7 +14,7 @@ class TestManualProvider:
                            unit="CNY", updated_at=1787000000.0)
         snap = p.fetch()
         assert snap.provider == "manual"
-        assert snap.plan_type == "DeepSeek（手动）"
+        assert snap.plan_type is None  # 名称走 display_name，避免标题重复
         assert snap.fetched_at == 1787000000.0  # 新鲜度=填写时间
         w = snap.primary_limit.primary
         assert w.is_balance

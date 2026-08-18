@@ -190,6 +190,7 @@ class FloatingHud(QWidget):
         self._any_success = False
         self._drag_pos: Optional[QPoint] = None
         self._rows: list[tuple[_WindowRow, QuotaWindow]] = []  # 供 tick 重排
+        self._fresh_labels: list[tuple[QLabel, ViewState]] = []  # 每分区新鲜度行
         self._section_headers: list[QLabel] = []
         self._compact: bool = bool(self._settings.get("compact"))
 
@@ -256,6 +257,7 @@ class FloatingHud(QWidget):
 
     def _clear_content(self) -> None:
         self._rows.clear()
+        self._fresh_labels.clear()
         self._section_headers.clear()
         while self._content.count():
             item = self._content.takeAt(0)
@@ -376,6 +378,7 @@ class FloatingHud(QWidget):
                     self._add_window_row(extra.primary, now_ts)
                     if extra.secondary is not None:
                         self._add_window_row(extra.secondary, now_ts)
+            self._add_fresh_line(st)  # 每个分区自己的更新时间
 
         self._update_footer()
         self.adjustSize()
@@ -399,6 +402,24 @@ class FloatingHud(QWidget):
         self._rows.append((row, w))
         self._content.addWidget(row)
 
+    def _add_fresh_line(self, st: ViewState) -> None:
+        """分区末尾的新鲜度行：各自显示该 provider 的更新时间/陈旧标记。"""
+        lbl = QLabel()
+        lbl.setStyleSheet("font-size: 11px;")
+        self._set_fresh_text(lbl, st)
+        self._fresh_labels.append((lbl, st))
+        self._content.addWidget(lbl)
+
+    @staticmethod
+    def _set_fresh_text(lbl: QLabel, st: ViewState) -> None:
+        fresh = StateStore.freshness_text(st.fetched_at)
+        if st.stale:
+            lbl.setText(tr("⚠ 数据陈旧 · 更新于 {f}").format(f=fresh))
+            lbl.setStyleSheet("color: #d29922; font-size: 11px;")
+        else:
+            lbl.setText(tr("更新于 {f}").format(f=fresh))
+            lbl.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+
     def _update_model_badge(self) -> None:
         info = read_model_info()
         if info is None:
@@ -410,29 +431,25 @@ class FloatingHud(QWidget):
         self._model_badge.show()
 
     def _update_footer(self) -> None:
-        """整体页脚：最旧快照的新鲜度；任一陈旧/全部失败时标注（超长截断防撑宽窗口）。"""
+        """页脚只在"所有 provider 都没数据"时显示错误；有数据时隐藏
+        （各分区有自己的新鲜度行）。"""
         views = self._current_views()
-        snaps = [v.state for v in views if v.state.snapshot is not None]
-        if not snaps:
-            first_err = next((v.state.error for v in views if v.state.error), None)
-            self._footer.setText(
-                f"⚠ {_short(first_err, FOOTER_MAX_CHARS)}" if first_err else tr("无数据"))
+        has_data = any(v.state.snapshot is not None for v in views)
+        if has_data:
+            self._footer.hide()
             return
-        oldest = min(s.fetched_at for s in snaps if s.fetched_at is not None)
-        fresh = StateStore.freshness_text(oldest)
-        if any(s.stale for s in snaps):
-            err = next((s.error for s in snaps if s.error), "")
-            self._footer.setText(tr("⚠ 数据陈旧（更新于 {f}）：{e}").format(
-                f=fresh, e=_short(err, 20)))
-        else:
-            self._footer.setText(tr("更新于 {f}").format(f=fresh))
+        self._footer.show()
+        first_err = next((v.state.error for v in views if v.state.error), None)
+        self._footer.setText(
+            f"⚠ {_short(first_err, FOOTER_MAX_CHARS)}" if first_err else tr("无数据"))
 
     def _retick(self) -> None:
-        """30s tick：重排倒计时与新鲜度，不触发网络查询。"""
+        """30s tick：重排倒计时与各分区新鲜度，不触发网络查询。"""
         now_ts = dt.datetime.now().timestamp()
         for row, w in self._rows:
             row.countdown.setText(_countdown_text(w, now_ts))
-        self._update_footer()
+        for lbl, st in self._fresh_labels:
+            self._set_fresh_text(lbl, st)
 
     # ---------- 外观与交互 ----------
 

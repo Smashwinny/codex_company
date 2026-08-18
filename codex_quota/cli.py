@@ -88,8 +88,11 @@ def render_text(snap: QuotaSnapshot, display_name: str = "Codex") -> str:
     if main is None:
         return tr("{name}：无数据").format(name=display_name)
 
-    plan = tr("套餐: {p}").format(p=snap.plan_type) if snap.plan_type else tr("套餐未知")
-    lines = [tr("{name}（{p}）").format(name=display_name, p=plan)]
+    plan = tr("套餐: {p}").format(p=snap.plan_type) if snap.plan_type else None
+    if plan:
+        lines = [tr("{name}（{p}）").format(name=display_name, p=plan)]
+    else:
+        lines = [display_name]
 
     lines.append("  " + _render_window(main.primary, now))
     if main.secondary is not None:

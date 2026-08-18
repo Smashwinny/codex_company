@@ -53,10 +53,10 @@ class ManualProvider:
         if self._balance is None:
             raise ManualError("尚未填写余额（托盘 → 管理额度来源 中填写）")
         w = QuotaWindow(abs_remaining=self._balance, abs_unit=self._unit)
-        rl = RateLimit(limit_id="manual", plan_type=self.display_name, primary=w)
+        rl = RateLimit(limit_id="manual", plan_type=None, primary=w)
         return QuotaSnapshot(
             fetched_at=self._updated_at or time.time(),
-            plan_type=self.display_name,
+            plan_type=None,  # 名称已在 display_name，避免标题栏重复显示
             limits=[rl],
             provider="manual",
         )
