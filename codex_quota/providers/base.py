@@ -69,6 +69,9 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
         elif section.get("type") == "manual":
             from .manual import ManualProvider
 
+            # dsh 凭证可用时 DeepSeek 走自动查询，手动余额自动停用
+            if read_dsh_api_key():
+                continue
             providers.append(ManualProvider.from_section(section))
 
     # dsh（DeepSeek Harness）凭证自动启用：key 已在 ~/.dsh/.credentials.yaml，

@@ -77,6 +77,10 @@ _EN: dict[str, str] = {
     "Kimi（本地 kimi CLI）": "Kimi (local kimi CLI)",
     "Claude Code（本地登录凭证）": "Claude Code (local credentials)",
     "手动余额（免 key）": "Manual balance (no key)",
+    "✓ 已检测到 dsh 凭证：DeepSeek 余额正在自动查询，手动余额已自动停用":
+        "✓ dsh credentials detected: DeepSeek balance auto-fetched, manual entry disabled",
+    "未检测到 dsh 凭证：可勾选并手填余额":
+        "No dsh credentials detected: enable to enter balance manually",
     "手动余额（适合网页版用户，定期手填）":
         "Manual balance (for web users, fill in periodically)",
     "显示名称": "Display name",

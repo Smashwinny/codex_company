@@ -169,9 +169,20 @@ class ProvidersDialog(QDialog):
         manual_label.setTextFormat(_Qt.TextFormat.RichText)
         lay.addWidget(manual_label)
         m = cfg.get("manual", {})
+        self._dsh_detected = read_dsh_api_key() is not None
         self._manual_cb = QCheckBox(tr("手动余额（适合网页版用户，定期手填）"))
-        self._manual_cb.setChecked(bool(m.get("enabled", True)) and bool(m))
         lay.addWidget(self._manual_cb)
+        if self._dsh_detected:
+            # 透明度显示：明确告诉用户为什么被停用
+            self._manual_cb.setChecked(False)
+            self._manual_cb.setEnabled(False)
+            self._manual_hint = QLabel(tr("✓ 已检测到 dsh 凭证：DeepSeek 余额正在自动查询，手动余额已自动停用"))
+        else:
+            self._manual_cb.setChecked(bool(m.get("enabled", True)) and bool(m))
+            self._manual_hint = QLabel(tr("未检测到 dsh 凭证：可勾选并手填余额"))
+        self._manual_hint.setWordWrap(True)
+        self._manual_hint.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
+        lay.addWidget(self._manual_hint)
         m_row = QHBoxLayout()
         self._manual_name = QLineEdit(str(m.get("display_name") or "DeepSeek（手动）"))
         self._manual_name.setPlaceholderText(tr("显示名称"))
@@ -187,6 +198,9 @@ class ProvidersDialog(QDialog):
         m_row.addWidget(self._manual_amount)
         m_row.addWidget(self._manual_unit)
         lay.addLayout(m_row)
+        if self._dsh_detected:
+            for w in (self._manual_name, self._manual_amount, self._manual_unit):
+                w.setEnabled(False)
         updated = m.get("updated_at")
         info = (tr("上次填写：{t}").format(t=StateStore.freshness_text(float(updated)))
                 if isinstance(updated, (int, float)) else tr("从未填写"))
@@ -227,8 +241,14 @@ class ProvidersDialog(QDialog):
             else:
                 # 写显式禁用标记而非删除：否则 dsh 自动检测会把它加回来
                 cfg[spec["type"]] = {"type": spec["type"], "enabled": False}
-        # 手动余额：填写新金额则刷新 updated_at；留空保留旧值
-        if self._manual_cb.isChecked():
+        # 手动余额：dsh 凭证可用时强制停用（保留已填值，dsh 消失后可恢复）；
+        # 填写新金额则刷新 updated_at；留空保留旧值
+        if self._dsh_detected:
+            prev = cfg.get("manual", {})
+            if prev:
+                prev["enabled"] = False
+                cfg["manual"] = prev
+        elif self._manual_cb.isChecked():
             prev = cfg.get("manual", {})
             amount_text = self._manual_amount.text().strip()
             try:
