@@ -198,9 +198,12 @@ class FloatingHud(QWidget):
 
         self._build_ui()
 
-        # 启动即展示各 provider 24h 内的缓存（标陈旧），不阻塞等待首次查询
-        for store in self._stores.values():
+        # 启动即展示各 provider 24h 内的缓存（标陈旧），不阻塞等待首次查询；
+        # 同时用缓存值播种重置检测器——重启间隙发生的额度重置也能检出
+        for name, store in self._stores.items():
             store.load_cached()
+            if store.state.snapshot is not None:
+                self._watcher.check(name, store.state.snapshot)
         self._apply()
 
         self._refresh_timer = QTimer(self)

@@ -189,6 +189,35 @@ class TestInteractions:
         assert live_hud._refresh_btn.isEnabled()  # finished 后恢复可用
         assert "更新于" in live_hud._fresh_labels[0][0].text()
 
+    def test_reset_detection_seeded_from_cache(self, qapp, monkeypatch):
+        """重启间隙发生的重置也要检出：启动时用磁盘缓存播种检测器。"""
+        # 预置一份"已用 91%"的缓存，模拟上次运行时的状态
+        from codex_quota.state import StateStore, default_cache_path
+
+        store = StateStore(cache_path=default_cache_path("codex"))
+        used_snap = snap()
+        used_snap.primary_limit.primary.used_percent = 91
+        store.on_success(used_snap)
+
+        monkeypatch.setattr(FloatingHud, "refresh", lambda self: None)
+        w = FloatingHud(providers=[FakeProvider("codex", "Codex")])
+        sent = []
+
+        class FakeNotifier:
+            def publish(self, title, body, **kw):
+                sent.append(body)
+                return True
+
+        w.notifier = FakeNotifier()
+        # 重置后的新快照（剩 100%）到达 → 应触发推送
+        reset_snap = snap()
+        reset_snap.primary_limit.primary.used_percent = 0
+        w._on_success("codex", reset_snap)
+        assert len(sent) == 1
+        assert "Codex" in sent[0]
+        w.close()
+        w.deleteLater()
+
     def test_refresh_after_delete_later_no_crash(self, live_hud):
         """回归：fetcher deleteLater 后再次刷新不得访问悬垂引用（曾致崩溃）。"""
         # 构造函数已 refresh 一次；处理延迟删除事件，模拟事件循环真正删掉 fetcher
