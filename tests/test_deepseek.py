@@ -16,6 +16,7 @@ from codex_quota.providers.deepseek import (
     DeepSeekError,
     DeepSeekProvider,
     parse_balance,
+    read_dsh_api_key,
 )
 
 NOW = 1787000000.0
@@ -121,7 +122,9 @@ class TestFetch:
         with pytest.raises(DeepSeekError, match="无效"):
             p.fetch()
 
-    def test_no_key(self):
+    def test_no_key(self, monkeypatch):
+        monkeypatch.setattr("codex_quota.providers.deepseek.read_dsh_api_key",
+                            lambda path=None: None)
         with pytest.raises(DeepSeekError, match="未配置"):
             DeepSeekProvider(api_key=None).fetch()
 
@@ -129,6 +132,57 @@ class TestFetch:
         p = DeepSeekProvider(api_key="sk-x", base_url="http://127.0.0.1:1", timeout=1)
         with pytest.raises(DeepSeekError, match="无法连接"):
             p.fetch()
+
+
+class TestDshCredentials:
+    def test_read_key(self, tmp_path):
+        f = tmp_path / ".credentials.yaml"
+        f.write_text('DEEPSEEK_API_KEY: sk-abc123\n')
+        assert read_dsh_api_key(str(f)) == "sk-abc123"
+
+    def test_read_quoted_key(self, tmp_path):
+        f = tmp_path / ".credentials.yaml"
+        f.write_text('DEEPSEEK_API_KEY: "sk-quoted"\n')
+        assert read_dsh_api_key(str(f)) == "sk-quoted"
+
+    def test_missing_file(self, tmp_path):
+        assert read_dsh_api_key(str(tmp_path / "nope")) is None
+
+    def test_fetch_falls_back_to_dsh(self, tmp_path, monkeypatch):
+        """无显式 key 时自动读 dsh 凭证。"""
+        f = tmp_path / ".credentials.yaml"
+        f.write_text("DEEPSEEK_API_KEY: sk-dsh-key\n")
+        monkeypatch.setattr(
+            "codex_quota.providers.deepseek.read_dsh_api_key",
+            lambda path=None: "sk-dsh-key")
+        p = DeepSeekProvider(api_key=None, base_url="http://127.0.0.1:1",
+                             timeout=0.5)
+        # 会走到网络错误 → 说明 key 已取到（否则会先报"未配置"）
+        with pytest.raises(DeepSeekError, match="无法连接"):
+            p.fetch()
+
+    def test_auto_assembly_with_dsh(self, tmp_path, monkeypatch):
+        from codex_quota.providers import default_providers
+
+        monkeypatch.delenv("CODEX_QUOTA_PROVIDERS", raising=False)
+        monkeypatch.setattr("codex_quota.providers.deepseek.read_dsh_api_key",
+                            lambda path=None: "sk-dsh")
+        names = [p.name for p in default_providers(
+            config_path=str(tmp_path / "none.toml"))]
+        assert "deepseek" in names
+
+    def test_no_auto_assembly_when_disabled(self, tmp_path, monkeypatch):
+        from codex_quota.providers import default_providers
+        from codex_quota.providers.config import save_providers_config
+
+        monkeypatch.delenv("CODEX_QUOTA_PROVIDERS", raising=False)
+        monkeypatch.setattr("codex_quota.providers.deepseek.read_dsh_api_key",
+                            lambda path=None: "sk-dsh")
+        path = str(tmp_path / "providers.toml")
+        save_providers_config({"deepseek": {"type": "deepseek", "enabled": False}},
+                              path)
+        names = [p.name for p in default_providers(config_path=path)]
+        assert "deepseek" not in names
 
 
 class TestAssembly:

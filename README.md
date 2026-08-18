@@ -85,6 +85,9 @@ cd codex_company
 | DeepSeek | `api.deepseek.com/user/balance` | 余额 ¥xx |
 | OpenRouter | `openrouter.ai/api/v1/credits` | 已用 % + 余额 $xx |
 
+> DeepSeek key 解析链：配置值 → `$环境变量` → **自动读取 dsh（DeepSeek Harness）
+> 的 `~/.dsh/.credentials.yaml`**——装了 dsh 并配过 key 的话开箱即用，无需任何输入。
+
 配置文件为 `~/.config/codex-quota/providers.toml`（权限 600），也可手写：
 
 ```toml

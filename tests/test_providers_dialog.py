@@ -55,6 +55,9 @@ class _FakeRunner(QObject):
 @pytest.fixture
 def dialog(qapp, monkeypatch):
     monkeypatch.setattr("codex_quota.ui.providers_dialog._TestRunner", _FakeRunner)
+    # 默认隔离 dsh 凭证检测（本机真实存在，会导致 deepseek 行自动勾选）
+    monkeypatch.setattr("codex_quota.ui.providers_dialog.read_dsh_api_key",
+                        lambda: None)
     hud = FakeHud()
     dlg = ProvidersDialog(hud)
     yield dlg, hud
@@ -108,20 +111,34 @@ class TestDialog:
         assert cfg["openrouter"]["api_key"] == "$OR_KEY"
         assert hud.reloaded == 1
 
-    def test_save_removes_unchecked_key_providers(self, qapp, monkeypatch):
+    def test_save_marks_unchecked_key_providers_disabled(self, qapp, monkeypatch):
         save_providers_config({
             "deepseek": {"type": "deepseek", "enabled": True, "api_key": "sk-x"},
             "openrouter": {"type": "openrouter", "enabled": True, "api_key": "sk-y"},
         })
         monkeypatch.setattr("codex_quota.ui.providers_dialog._TestRunner", _FakeRunner)
+        monkeypatch.setattr("codex_quota.ui.providers_dialog.read_dsh_api_key",
+                            lambda: None)
         hud = FakeHud()
         dlg = ProvidersDialog(hud)
         dlg._rows["deepseek"].cb.setChecked(False)
         dlg._rows["openrouter"].cb.setChecked(True)
         dlg._save()
         cfg = load_providers_config()
-        assert "deepseek" not in cfg
-        assert "openrouter" in cfg
+        # 写禁用标记而非删除（防 dsh 自动检测加回来）
+        assert cfg["deepseek"]["enabled"] is False
+        assert cfg["openrouter"]["enabled"] is True
+        dlg.close()
+        dlg.deleteLater()
+
+    def test_dsh_detected_autochecks_deepseek(self, qapp, monkeypatch):
+        monkeypatch.setattr("codex_quota.ui.providers_dialog._TestRunner", _FakeRunner)
+        monkeypatch.setattr("codex_quota.ui.providers_dialog.read_dsh_api_key",
+                            lambda: "sk-from-dsh")
+        dlg = ProvidersDialog(FakeHud())
+        row = dlg._rows["deepseek"]
+        assert row.cb.isChecked() is True
+        assert "dsh" in row.result.text()
         dlg.close()
         dlg.deleteLater()
 

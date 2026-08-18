@@ -5,12 +5,18 @@ GET https://api.deepseek.com/user/balance（Bearer API key）→
 "total_balance": "100.00", ...}]}
 
 余额型数据：无窗口/重置概念，映射为 abs_remaining + abs_unit。
-api_key 支持 "$ENV_VAR" 引用环境变量。
+
+API key 解析链（按优先级）：
+1. 配置显式值（或 "$ENV_VAR" 引用）
+2. **dsh 凭证文件** ~/.dsh/.credentials.yaml（DeepSeek Harness 首次配置
+   后 key 就存在这里——同机同权限域，直接复用，用户零输入）
 """
 
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -20,10 +26,22 @@ from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
 from .config import resolve_secret
 
 BALANCE_URL = "https://api.deepseek.com/user/balance"
+_DSH_KEY_RE = re.compile(r'DEEPSEEK_API_KEY:\s*["\']?([^"\'\s]+)')
 
 
 class DeepSeekError(Exception):
     pass
+
+
+def read_dsh_api_key(path: Optional[str] = None) -> Optional[str]:
+    """从 dsh（DeepSeek Harness）的凭证文件读取 DEEPSEEK_API_KEY。"""
+    path = path or os.path.join(os.path.expanduser("~"), ".dsh", ".credentials.yaml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            m = _DSH_KEY_RE.search(f.read())
+    except OSError:
+        return None
+    return m.group(1) if m else None
 
 
 def parse_balance(payload: dict[str, Any], now: Optional[float] = None) -> QuotaSnapshot:
@@ -57,7 +75,7 @@ class DeepSeekProvider:
         self._timeout = timeout
 
     def fetch(self) -> QuotaSnapshot:
-        key = resolve_secret(self._api_key)
+        key = resolve_secret(self._api_key) or read_dsh_api_key()
         if not key:
             raise DeepSeekError("未配置 DeepSeek API key（托盘 → 管理额度来源 中填写）")
         req = urllib.request.Request(

@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
 
 from ..i18n import tr
 from ..providers.config import load_providers_config, save_providers_config
-from ..providers.deepseek import DeepSeekProvider
+from ..providers.deepseek import DeepSeekProvider, read_dsh_api_key
 from ..providers.openrouter import OpenRouterProvider
 from ..state import StateStore
 from .theme import DIALOG_STYLE, FG_DIM, style_section
@@ -149,7 +149,14 @@ class ProvidersDialog(QDialog):
         lay.addWidget(key_label)
         self._rows: dict[str, KeyProviderRow] = {}
         for spec in KEY_PROVIDER_SPECS:
-            row = KeyProviderRow(spec, cfg.get(spec["type"], {}), self)
+            section = cfg.get(spec["type"], {})
+            row = KeyProviderRow(spec, section, self)
+            # dsh 凭证自动检测：无显式配置但 dsh 里有 key → 默认启用并提示
+            if (spec["type"] == "deepseek" and not section.get("api_key")
+                    and read_dsh_api_key()):
+                row.cb.setChecked(True)
+                row.result.setText(tr("✓ 已检测到 dsh 凭证，key 留空即可自动使用"))
+                row.result.setStyleSheet(f"color: {FG_DIM};")
             self._rows[spec["type"]] = row
             lay.addWidget(row)
 
@@ -218,7 +225,8 @@ class ProvidersDialog(QDialog):
                     "api_key": row.key.text().strip(),
                 }
             else:
-                cfg.pop(spec["type"], None)
+                # 写显式禁用标记而非删除：否则 dsh 自动检测会把它加回来
+                cfg[spec["type"]] = {"type": spec["type"], "enabled": False}
         # 手动余额：填写新金额则刷新 updated_at；留空保留旧值
         if self._manual_cb.isChecked():
             prev = cfg.get("manual", {})

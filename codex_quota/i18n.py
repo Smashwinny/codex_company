@@ -86,6 +86,8 @@ _EN: dict[str, str] = {
     "手动余额": "Manual balance",
     "API key（sk-… 或 $环境变量）": "API key (sk-… or $ENV_VAR)",
     "测试连接": "Test connection",
+    "✓ 已检测到 dsh 凭证，key 留空即可自动使用":
+        "✓ dsh credentials detected, leave key empty to auto-use",
     "测试中…": "Testing…",
     "✅ 连接成功：余额 {t}": "✅ Connected: balance {t}",
     "保存": "Save",

@@ -33,7 +33,7 @@ class Provider(Protocol):
 def default_providers(config_path: str | None = None) -> list[Provider]:
     from .claude_code import ClaudeCodeProvider, credentials_path
     from .codex import CodexProvider
-    from .deepseek import DeepSeekProvider
+    from .deepseek import DeepSeekProvider, read_dsh_api_key
     from .kimi import KimiProvider, find_kimi_bin
     from .openrouter import OpenRouterProvider
 
@@ -70,6 +70,11 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
             from .manual import ManualProvider
 
             providers.append(ManualProvider.from_section(section))
+
+    # dsh（DeepSeek Harness）凭证自动启用：key 已在 ~/.dsh/.credentials.yaml，
+    # 用户零输入；显式配置或禁用过 deepseek 节则不自动加
+    if "deepseek" not in cfg and read_dsh_api_key():
+        providers.append(DeepSeekProvider())
 
     filt = os.environ.get("CODEX_QUOTA_PROVIDERS")
     if filt:
