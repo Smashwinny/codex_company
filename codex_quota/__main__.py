@@ -113,6 +113,23 @@ def _run_hud(args: list[str]) -> int:
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
     hud.show()
+    # 优雅退出：SIGTERM/SIGINT → 正常退出事件循环，finally 回收子进程
+    # （kimi web / cloudflared 都在独立进程组，主进程被杀不会连带，必须主动清理）
+    import signal
+
+    def _graceful_quit(signum, frame):
+        logging.getLogger("codex_quota").info("收到信号 %s，正在退出", signum)
+        QApplication.quit()
+
+    signal.signal(signal.SIGTERM, _graceful_quit)
+    signal.signal(signal.SIGINT, _graceful_quit)
+    # Python 信号处理器只在解释器执行字节码时运行，app.exec() 阻塞在 C++ 层；
+    # 用空 QTimer 周期唤醒解释器，让挂起的信号处理器得以及时执行
+    from PyQt6.QtCore import QTimer
+
+    _sig_timer = QTimer()
+    _sig_timer.start(500)
+    _sig_timer.timeout.connect(lambda: None)
     try:
         return app.exec()
     finally:
