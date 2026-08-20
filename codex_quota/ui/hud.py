@@ -50,7 +50,7 @@ BG = QColor(13, 17, 23, 230)   # 半透明深色底
 FG = "#e6edf3"
 FG_DIM = "#8b949e"
 
-MAX_WIDTH = 420        # 窗口最大宽度，防长错误文本把窗口撑宽
+HUD_WIDTH = 360        # 窗口固定宽度（原来 min 300/max 420 弹性，文本变化会抖动）
 FOOTER_MAX_CHARS = 48  # 页脚单行最大字符数，超出截断
 ERROR_MAX_CHARS = 120  # 分区内联错误最大字符数（完整内容放 tooltip）
 
@@ -170,8 +170,9 @@ class FloatingHud(QWidget):
             | Qt.WindowType.Tool  # 不出现在任务栏
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumWidth(300)
-        self.setMaximumWidth(MAX_WIDTH)
+        # 固定宽度：倒计时/百分比文本长度变化不再触发窗口宽度抖动，
+        # 长文本（错误信息等）走 WordWrap 折行，只影响高度
+        self.setFixedWidth(HUD_WIDTH)
 
         if providers is None:
             from ..providers import default_providers
@@ -345,6 +346,16 @@ class FloatingHud(QWidget):
         ]
 
     def _apply(self) -> None:
+        # 防抖动：重建期间禁止重绘——清空→逐行重建→adjustSize 的中间状态
+        # （窗口塌缩成空壳再长回来）不会被画出来，用户只看到最终结果
+        self.setUpdatesEnabled(False)
+        try:
+            self._apply_rebuild()
+        finally:
+            self.setUpdatesEnabled(True)
+        self.state_changed.emit(self._current_views())
+
+    def _apply_rebuild(self) -> None:
         self._clear_content()
         self._update_model_badge()  # 每次刷新重读 config.toml，改模型即时生效
 
@@ -387,7 +398,6 @@ class FloatingHud(QWidget):
 
         self._update_footer()
         self.adjustSize()
-        self.state_changed.emit(self._current_views())
 
     def _add_provider_header(self, provider, st: ViewState) -> None:
         color = PROVIDER_COLORS.get(provider.name, FG_DIM)

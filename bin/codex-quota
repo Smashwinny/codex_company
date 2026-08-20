@@ -3,7 +3,9 @@
 # 日志：~/.cache/codex-quota/hud.log
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# readlink -f 解析软链：本脚本可能被软链到 ~/.local/bin（install.sh 第 6 步），
+# 直接用 BASH_SOURCE 会把 ~/.local 当成项目根 → 找不到 .venv → 静默起不来
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 PY="$ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY=python3
 
@@ -22,4 +24,13 @@ fi
 
 setsid "$PY" -m codex_quota "$@" >>"$LOG_DIR/hud.log" 2>&1 < /dev/null &
 disown
-echo "codex-quota 已启动（日志: $LOG_DIR/hud.log）"
+# 启动后等 3 秒确认进程真的活着：之前 spawn 完就打印"已启动"，
+# 进程秒退（依赖缺失/启动崩溃）时用户被误导，只能去翻日志才发现
+sleep 3
+if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
+    echo "codex-quota 已启动（日志: $LOG_DIR/hud.log）"
+else
+    echo "codex-quota 启动失败，日志末尾：" >&2
+    tail -n 15 "$LOG_DIR/hud.log" >&2
+    exit 1
+fi
