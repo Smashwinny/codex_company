@@ -8,7 +8,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QWidget
 
-# 与 CLI 一致的三档阈值（按剩余量）：绿 >30 / 黄 ≤30 / 红 ≤10
+# 三档阈值（按剩余量百分比）：默认 绿 >30 / 黄 ≤30 / 红 ≤10，
+# 可在 settings.json 或托盘菜单"告警阈值"调整（set_thresholds 即时生效）
+WARN_THRESHOLD = 30.0
+CRIT_THRESHOLD = 10.0
 COLOR_OK = QColor("#3fb950")
 COLOR_WARN = QColor("#d29922")
 COLOR_CRIT = QColor("#f85149")
@@ -16,12 +19,21 @@ COLOR_UNKNOWN = QColor("#8b949e")
 COLOR_TRACK = QColor("#30363d")
 
 
+def set_thresholds(warn: float, crit: float) -> None:
+    """全局设置告警阈值（黄线/红线）。要求 0 < crit < warn ≤ 100，否则抛 ValueError。"""
+    if not (0 < crit < warn <= 100):
+        raise ValueError(f"无效阈值: warn={warn} crit={crit}（要求 0 < crit < warn ≤ 100）")
+    global WARN_THRESHOLD, CRIT_THRESHOLD
+    WARN_THRESHOLD = float(warn)
+    CRIT_THRESHOLD = float(crit)
+
+
 def threshold_color(remaining_percent: Optional[float]) -> QColor:
     if remaining_percent is None:
         return COLOR_UNKNOWN
-    if remaining_percent <= 10:
+    if remaining_percent <= CRIT_THRESHOLD:
         return COLOR_CRIT
-    if remaining_percent <= 30:
+    if remaining_percent <= WARN_THRESHOLD:
         return COLOR_WARN
     return COLOR_OK
 

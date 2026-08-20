@@ -28,6 +28,9 @@ DEFAULTS: dict[str, Any] = {
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": None,      # ntfy 订阅主题，首次运行生成后持久化（主题即凭证）
     "wizard_done": False,    # 首启向导是否已完成
+    "color_warn_threshold": 30,  # 黄线：剩余量 ≤ 此百分比显示黄色
+    "color_crit_threshold": 10,  # 红线：剩余量 ≤ 此百分比显示红色
+    "tray_color_excludes": [],   # 不参与托盘取色的额度桶 ["provider:桶名", ...]
 }
 
 

@@ -58,6 +58,15 @@ def _run_hud(args: list[str]) -> int:
     hud.restore_position()
     settings = hud._settings
 
+    # 告警阈值（黄线/红线）：settings.json 或托盘菜单"告警阈值"可调
+    from .ui.widgets import set_thresholds
+
+    try:
+        set_thresholds(float(settings.get("color_warn_threshold")),
+                       float(settings.get("color_crit_threshold")))
+    except (TypeError, ValueError) as exc:
+        logging.getLogger("codex_quota").warning("阈值配置无效，用默认值: %s", exc)
+
     # 首启向导：环境检测 + 修复引导（先于 web/隧道/通知初始化，勾选结果即生效）
     from .ui.wizard import SetupWizardDialog, should_show_wizard
 

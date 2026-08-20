@@ -35,14 +35,33 @@ def make_dot_icon(color: QColor, size: int = ICON_SIZE) -> QIcon:
     return QIcon(pm)
 
 
-def worst_remaining(views: list[ProviderView]) -> Optional[float]:
-    """所有 provider 的最低剩余量；余额 crit/warn 折算为 5/20 参与取色。"""
+def color_source_keys(views: list[ProviderView]) -> list[tuple[str, str]]:
+    """可参与取色的 (key, 标签) 列表，key 形如 "codex:GPT-5.3-Codex-Spark"。
+    供"取色来源"子菜单构建勾选项；无数据的 provider 不出现在列表里。"""
+    items: list[tuple[str, str]] = []
+    for v in views:
+        snap = v.state.snapshot
+        if snap is None:
+            continue
+        for limit in snap.limits:
+            bucket = limit.limit_name or limit.limit_id
+            items.append((f"{v.name}:{bucket}", f"{v.display_name} · {bucket}"))
+    return items
+
+
+def worst_remaining(views: list[ProviderView],
+                    excludes: frozenset[str] = frozenset()) -> Optional[float]:
+    """参与取色窗口的最低剩余量；余额 crit/warn 折算为 5/20 参与取色。
+    excludes 里的 (provider:桶) 跳过——比如不关心的 Spark 桶耗尽不应拖红图标。"""
     values = []
     for v in views:
         snap = v.state.snapshot
         if snap is None:
             continue
         for limit in snap.limits:
+            bucket = limit.limit_name or limit.limit_id
+            if f"{v.name}:{bucket}" in excludes:
+                continue
             for w in (limit.primary, limit.secondary):
                 if w is None:
                     continue
@@ -111,6 +130,35 @@ class QuotaTray(QObject):
         self.action_wizard.triggered.connect(self._open_wizard)
         self.action_providers = QAction(tr("管理额度来源"), self)
         self.action_providers.triggered.connect(self._open_providers)
+
+        # 告警阈值预设子菜单（黄线/红线，选择即生效并持久化；任意值可手写 settings.json）
+        # 注意：QMenu(title, parent) 的 parent 必须是 QWidget，QuotaTray 是 QObject，
+        # 传 self 会 TypeError——标题单参数构造，生命周期与托盘一致（应用级常驻）
+        self._thresh_menu = QMenu(tr("告警阈值"))
+        self._thresh_menu.setToolTipsVisible(True)
+        self._thresh_actions: list[tuple[QAction, int, int]] = []
+        for warn, crit, tag in ((50, 20, tr("敏感")), (30, 10, tr("默认")),
+                                (20, 5, tr("宽松"))):
+            a = QAction(tr("{w} / {c}（{tag}）").format(w=warn, c=crit, tag=tag), self)
+            a.setCheckable(True)
+            a.setToolTip(tr("剩余量 ≤ {w}% 显示黄色，≤ {c}% 显示红色").format(w=warn, c=crit))
+            a.triggered.connect(lambda _=False, w=warn, c=crit: self._set_thresholds(w, c))
+            self._thresh_menu.addAction(a)
+            self._thresh_actions.append((a, warn, crit))
+        self._thresh_menu.aboutToShow.connect(self._sync_threshold_checks)
+
+        # 主模型显示子菜单：勾选哪些额度桶参与托盘图标取色（取最低值）。
+        # 菜单项持久化，只增不重建——aboutToShow 里 clear() 重建会取消子菜单
+        # 弹出（表现为"点不开"），菜单开着时重建又会把菜单收掉
+        self._color_src_menu = QMenu(tr("主模型显示"))
+        hint = QAction(tr("勾选参与取色，图标按勾选项的最低剩余量变色"), self)
+        hint.setEnabled(False)
+        self._color_src_menu.addAction(hint)
+        self._color_src_empty = QAction(tr("（暂无数据）"), self)
+        self._color_src_empty.setEnabled(False)
+        self._color_src_menu.addAction(self._color_src_empty)
+        self._color_src_menu.addSeparator()
+        self._color_src_actions: dict[str, QAction] = {}  # key → 持久勾选项
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -123,6 +171,8 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_notify)
         self._menu.addAction(self.action_wizard)
         self._menu.addAction(self.action_providers)
+        self._menu.addMenu(self._thresh_menu)
+        self._menu.addMenu(self._color_src_menu)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -142,8 +192,11 @@ class QuotaTray(QObject):
     # ---------- 状态更新 ----------
 
     def update_state(self, views: list[ProviderView]) -> None:
-        rem = worst_remaining(views)
+        excludes = frozenset(
+            self._hud._settings.get("tray_color_excludes") or [])
+        rem = worst_remaining(views, excludes)
         self.tray.setIcon(make_dot_icon(threshold_color(rem)))
+        self._sync_color_src_menu()  # 增量同步勾选项（不重建，见菜单创建处注释）
 
         lines = summary_lines(views)
         tip = tr("⚡ 额度监控") + "\n" + "\n".join(lines)
@@ -166,6 +219,55 @@ class QuotaTray(QObject):
             self._summary_actions.append(item)
 
     # ---------- 交互 ----------
+
+    def _sync_threshold_checks(self) -> None:
+        warn = float(self._hud._settings.get("color_warn_threshold"))
+        crit = float(self._hud._settings.get("color_crit_threshold"))
+        for a, w, c in self._thresh_actions:
+            a.setChecked(w == warn and c == crit)
+
+    def _set_thresholds(self, warn: int, crit: int) -> None:
+        from .widgets import set_thresholds
+
+        set_thresholds(warn, crit)
+        self._hud._settings.set("color_warn_threshold", warn)
+        self._hud._settings.set("color_crit_threshold", crit)
+        self._hud._apply()  # 重渲染 HUD 并 emit state_changed → 托盘图标同步变色
+
+    # ---------- 取色来源 ----------
+
+    def _sync_color_src_menu(self) -> None:
+        """增量同步"主模型显示"子菜单：新桶补建勾选项、消失的桶隐藏、
+        勾选状态对齐 settings；已存在的项绝不删除/重建（防菜单被收掉）。"""
+        items = color_source_keys(self._hud._current_views())
+        excludes = set(self._hud._settings.get("tray_color_excludes") or [])
+        self._color_src_empty.setVisible(not items)
+        seen = set()
+        for key, label in items:
+            seen.add(key)
+            a = self._color_src_actions.get(key)
+            if a is None:
+                a = QAction(label, self)
+                a.setCheckable(True)
+                a.setToolTip(key)
+                a.triggered.connect(
+                    lambda _=False, k=key: self._toggle_color_source(k))
+                self._color_src_menu.addAction(a)
+                self._color_src_actions[key] = a
+            a.setVisible(True)
+            a.setChecked(key not in excludes)
+        for key, a in self._color_src_actions.items():
+            if key not in seen:
+                a.setVisible(False)
+
+    def _toggle_color_source(self, key: str) -> None:
+        excludes = set(self._hud._settings.get("tray_color_excludes") or [])
+        if key in excludes:
+            excludes.discard(key)
+        else:
+            excludes.add(key)
+        self._hud._settings.set("tray_color_excludes", sorted(excludes))
+        self.update_state(self._hud._current_views())  # 图标立即按新取色集合刷新
 
     def _sync_toggle_text(self) -> None:
         self.action_toggle.setText(tr("隐藏悬浮窗") if self._hud.isVisible()

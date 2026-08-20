@@ -85,6 +85,19 @@ _EN: dict[str, str] = {
     "发送失败（检查网络/ntfy 服务）": "Send failed (check network/ntfy)",
     "复制": "Copy",
     "完成": "Done",
+    # 告警阈值
+    "告警阈值": "Alert thresholds",
+    "敏感": "sensitive",
+    "默认": "default",
+    "宽松": "relaxed",
+    "{w} / {c}（{tag}）": "{w} / {c} ({tag})",
+    "剩余量 ≤ {w}% 显示黄色，≤ {c}% 显示红色":
+        "≤ {w}% left shows yellow, ≤ {c}% shows red",
+    # 取色来源
+    "主模型显示": "Primary model display",
+    "（暂无数据）": "(no data yet)",
+    "勾选参与取色，图标按勾选项的最低剩余量变色":
+        "Checked items set the icon color (worst remaining wins)",
     # 首启向导 / 自检
     "codex-quota 初始设置": "codex-quota Setup",
     "检测运行环境，缺失项一键复制修复命令":
