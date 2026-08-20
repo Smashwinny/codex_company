@@ -3,7 +3,9 @@
 #   1. 检查依赖（python3 ≥ 3.10 / codex CLI / kimi CLI 可选）
 #   2. 准备 .venv 并安装 PyQt6
 #   3. 确保 libxcb-cursor 可用（无 root 时下载 .deb 解压到 vendor/）
-#   4. 创建应用菜单桌面入口（~/.local/share/applications/codex-quota.desktop）
+#   4. 确保 cloudflared 可用（手机公网访问隧道，可选）
+#   5. 创建应用菜单桌面入口（~/.local/share/applications/codex-quota.desktop）
+#   6. 软链 codex-quota 命令到 ~/.local/bin（终端直接敲名字启动）
 # 幂等：重复运行安全。
 set -euo pipefail
 
@@ -13,7 +15,7 @@ cd "$ROOT"
 warn() { echo "    ⚠ $*"; }
 ok()   { echo "    OK: $*"; }
 
-echo "==> [1/5] 检查依赖"
+echo "==> [1/6] 检查依赖"
 
 # --- python3 ≥ 3.10 ---
 if ! command -v python3 >/dev/null; then
@@ -42,7 +44,7 @@ else
     warn "未找到 kimi CLI —— 仅显示 Codex（安装后自动启用，无需重装）"
 fi
 
-echo "==> [2/5] Python 虚拟环境（PyQt6）"
+echo "==> [2/6] Python 虚拟环境（PyQt6）"
 if [ ! -x "$ROOT/.venv/bin/python" ]; then
     if command -v virtualenv >/dev/null; then
         virtualenv .venv
@@ -61,7 +63,7 @@ if ! "$ROOT/.venv/bin/python" -c "import PyQt6" 2>/dev/null; then
 fi
 ok "PyQt6 $("$ROOT/.venv/bin/python" -c 'import PyQt6.QtCore as c; print(c.QT_VERSION_STR)')"
 
-echo "==> [3/5] libxcb-cursor（Qt xcb 插件依赖）"
+echo "==> [3/6] libxcb-cursor（Qt xcb 插件依赖）"
 if ldconfig -p 2>/dev/null | grep -q libxcb-cursor; then
     ok "系统已安装"
 elif [ -f "$ROOT/vendor/lib/libxcb-cursor.so.0" ]; then
@@ -79,7 +81,7 @@ else
     rm -rf "$TMP"
 fi
 
-echo "==> [4/5] cloudflared（手机公网访问隧道，可选但推荐）"
+echo "==> [4/6] cloudflared（手机公网访问隧道，可选但推荐）"
 ARCH="$(uname -m)"
 case "$ARCH" in
     x86_64) CF_ASSET="cloudflared-linux-amd64" ;;
@@ -104,25 +106,51 @@ else
     fi
 fi
 
-echo "==> [5/5] 桌面入口"
+echo "==> [5/6] 桌面入口"
 APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-mkdir -p "$APPS"
+ICONS="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+mkdir -p "$APPS" "$ICONS"
+cp "$ROOT/assets/codex-quota.svg" "$ICONS/codex-quota.svg"
 cat > "$APPS/codex-quota.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Codex Quota
 Comment=Codex/Kimi 额度悬浮窗 / AI quota floating widget
 Exec=$ROOT/bin/codex-quota
+Icon=codex-quota
 Terminal=false
 Categories=Utility;Development;
 Keywords=codex;kimi;quota;token;
+StartupWMClass=codex-quota
 EOF
-ok "$APPS/codex-quota.desktop"
+ok "$APPS/codex-quota.desktop（含图标）"
+
+echo "==> [6/6] 命令入口（~/.local/bin）"
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
+ln -sf "$ROOT/bin/codex-quota" "$BIN_DIR/codex-quota"
+ok "$BIN_DIR/codex-quota -> $ROOT/bin/codex-quota"
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+    warn "$BIN_DIR 不在 PATH 里，终端直接敲 codex-quota 会找不到。"
+    warn "  加入 PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
+    warn "  （应用菜单启动、开机自启不受影响）"
+fi
 
 echo
 echo "安装完成！启动方式（任选）："
-echo "  · 应用菜单搜索 \"Codex Quota\" 点击启动"
-echo "  · 命令行: $ROOT/bin/codex-quota"
+echo "  · 终端: codex-quota"
+echo "  · 应用菜单搜索 \"Codex Quota\"（黄色闪电图标）点击启动"
 echo "  · 开机自启: 启动后在托盘菜单勾选 \"开机自启\""
+echo "  · 已在运行时重复启动只会提示，不会开第二个实例"
 echo
 echo "日志: ~/.cache/codex-quota/hud.log"
+
+# 交互终端下装完直接问要不要启动，不用记任何启动方式
+if [ -t 0 ] && [ -t 1 ]; then
+    echo
+    read -r -p "现在启动 Codex Quota？[Y/n] " ans || true
+    case "${ans:-Y}" in
+        n|N) echo "稍后想启动时终端敲 codex-quota 即可。" ;;
+        *) "$ROOT/bin/codex-quota" ;;
+    esac
+fi
