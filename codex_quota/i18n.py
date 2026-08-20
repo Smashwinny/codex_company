@@ -52,9 +52,39 @@ _EN: dict[str, str] = {
     "开机自启": "Launch at login",
     "复制手机访问地址": "Copy phone access URL",
     "手机与电脑同一局域网，浏览器打开即看": "Open in phone browser on the same LAN",
-    "复制 ntfy 通知主题": "Copy ntfy notify topic",
-    "手机 ntfy App 订阅此主题，额度重置时收推送":
-        "Subscribe in ntfy app to get push when quota resets",
+    "推送访问地址到手机": "Push access URL to phone",
+    "通过 ntfy 推送网页地址，手机点通知直接打开":
+        "Push the web URL via ntfy — tap the notification to open it",
+    "推送失败（网络或 ntfy 服务不可达）": "Push failed (network or ntfy unreachable)",
+    "未开启 ntfy 通知，无法推送": "ntfy notify is off — cannot push",
+    "未开启手机访问，没有可推送的地址": "Phone access is off — no URL to push",
+    "手机通知（ntfy）订阅指引": "Phone notify (ntfy) guide",
+    "查看/复制订阅主题、命令主题，发送测试推送":
+        "View/copy topics and send a test push",
+    "未开启 ntfy 通知": "ntfy notify is off",
+    "此框只在首次生成主题时自动弹出一次；之后可从托盘菜单再次打开":
+        "Shown automatically once when the topic is first created; reopen anytime from the tray menu",
+    "① 订阅（收额度重置 / 访问地址推送）":
+        "1. Subscribe (quota-reset / access-URL pushes)",
+    "手机安装 ntfy App → 添加订阅下面这个主题；或在手机浏览器直接打开订阅链接，按提示跳转 App":
+        "Install the ntfy app on your phone → subscribe to the topic below; or open the subscribe link in your phone browser and follow the prompt",
+    "主题": "Topic",
+    "订阅链接": "Subscribe URL",
+    "② 反向触发（想用手机看时，主动要地址）":
+        "2. Trigger from phone (ask for the URL on demand)",
+    "在 ntfy App 里再订阅下面的命令主题；想用手机看仪表盘时，向它发送 url ——电脑会立刻回推当前访问地址，点通知直接打开网页":
+        "Also subscribe to the command topic below; to view the dashboard, send 'url' to it — the PC immediately pushes back the current URL, tap to open",
+    "命令主题": "Command topic",
+    "③ 验证": "3. Verify",
+    "发送测试推送": "Send test push",
+    "手机上应立刻收到一条通知；收不到说明订阅没配对":
+        "Your phone should get a notification right away; if not, the subscription isn't set up",
+    "🔔 测试推送：订阅成功！额度重置、手机访问地址都会推到这里。":
+        "🔔 Test push: subscription works! Quota resets and access URLs will arrive here.",
+    "已发送 ✓（看手机）": "Sent ✓ (check phone)",
+    "发送失败（检查网络/ntfy 服务）": "Send failed (check network/ntfy)",
+    "复制": "Copy",
+    "完成": "Done",
     # 首启向导 / 自检
     "codex-quota 初始设置": "codex-quota Setup",
     "检测运行环境，缺失项一键复制修复命令":

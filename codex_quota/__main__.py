@@ -98,6 +98,7 @@ def _run_hud(args: list[str]) -> int:
                 tunnel = None
 
     # 额度重置推送：ntfy 主题（主题即凭证，自动生成持久化）
+    new_ntfy_topic = False
     if settings.get("notify_enabled"):
         from .notify import NtfyNotifier
         from .web import generate_token
@@ -106,8 +107,40 @@ def _run_hud(args: list[str]) -> int:
         if not topic:
             topic = "codex-quota-" + generate_token()[:12]
             settings.set("ntfy_topic", topic)
+            new_ntfy_topic = True
         hud.notifier = NtfyNotifier(server=settings.get("ntfy_server"), topic=topic)
         print(f"手机通知: ntfy App 订阅主题 {topic}（{hud.notifier.subscribe_url}）",
+              file=sys.stderr)
+
+    # 启动即把访问地址推到 ntfy（隧道 URL 每次随机，不推就没法在手机上主动找到）；
+    # 手机点通知直接打开网页。之后想再要地址可从托盘菜单"推送访问地址到手机"重发
+    if hud.notifier is not None:
+        url = hud.public_url or hud.web_url
+        if url:
+            hud.notifier.publish(
+                "codex-quota",
+                f"📱 手机访问地址（点通知直接打开）：\n{url}",
+                tags="link", click=url)
+
+    # 手机反向触发：向 <主题>-cmd 发 "url" → 回推当前访问地址（点通知直达网页）。
+    # 回调读取的是触发时刻的 hud.public_url，隧道重连换新地址后也始终推最新值
+    cmd_listener = None
+    if hud.notifier is not None and (hud.public_url or hud.web_url):
+        from .notify import NtfyCommandListener
+
+        def _push_url_on_demand():
+            url = hud.public_url or hud.web_url
+            if url:
+                hud.notifier.publish(
+                    "codex-quota",
+                    f"📱 手机访问地址（点通知直接打开）：\n{url}",
+                    tags="link", click=url)
+
+        cmd_topic = hud.notifier.topic + "-cmd"
+        cmd_listener = NtfyCommandListener(hud.notifier.server, cmd_topic,
+                                           _push_url_on_demand)
+        cmd_listener.start()
+        print(f"手机触发推送: ntfy 向主题 {cmd_topic} 发送 url 即回推访问地址",
               file=sys.stderr)
 
     if QSystemTrayIcon.isSystemTrayAvailable():
@@ -122,6 +155,13 @@ def _run_hud(args: list[str]) -> int:
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
     hud.show()
+
+    # 首次生成 ntfy 主题时自动弹一次订阅指引：订阅关系刚建立，
+    # 正是用户最需要"手机上要做什么"的时刻；之后从托盘菜单再开
+    if new_ntfy_topic and hud.notifier is not None:
+        from .ui.notify_dialog import NotifyGuideDialog
+
+        NotifyGuideDialog(hud.notifier, parent=hud).exec()
 
     # 隧道看门狗：cloudflared 死亡 → 限流自动重连 → ntfy 推送新地址
     if tunnel is not None:
@@ -150,7 +190,7 @@ def _run_hud(args: list[str]) -> int:
                     hud.notifier.publish(
                         "codex-quota",
                         f"📱 手机访问新地址（隧道已重连）：\n{hud.public_url}",
-                        tags="link")
+                        tags="link", click=hud.public_url)
             finally:
                 _restart_busy.clear()
 
@@ -185,6 +225,8 @@ def _run_hud(args: list[str]) -> int:
     try:
         return app.exec()
     finally:
+        if cmd_listener is not None:
+            cmd_listener.stop()
         if tunnel is not None:
             tunnel.stop()
         if web_server is not None:

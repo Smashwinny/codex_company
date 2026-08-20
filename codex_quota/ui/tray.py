@@ -101,9 +101,12 @@ class QuotaTray(QObject):
         self.action_phone = QAction(tr("复制手机访问地址"), self)
         self.action_phone.setToolTip(tr("手机与电脑同一局域网，浏览器打开即看"))
         self.action_phone.triggered.connect(self._copy_phone_url)
-        self.action_notify = QAction(tr("复制 ntfy 通知主题"), self)
-        self.action_notify.setToolTip(tr("手机 ntfy App 订阅此主题，额度重置时收推送"))
-        self.action_notify.triggered.connect(self._copy_ntfy_topic)
+        self.action_push_url = QAction(tr("推送访问地址到手机"), self)
+        self.action_push_url.setToolTip(tr("通过 ntfy 推送网页地址，手机点通知直接打开"))
+        self.action_push_url.triggered.connect(self._push_phone_url)
+        self.action_notify = QAction(tr("手机通知（ntfy）订阅指引"), self)
+        self.action_notify.setToolTip(tr("查看/复制订阅主题、命令主题，发送测试推送"))
+        self.action_notify.triggered.connect(self._open_notify_guide)
         self.action_wizard = QAction(tr("初始设置 / 环境自检"), self)
         self.action_wizard.triggered.connect(self._open_wizard)
         self.action_providers = QAction(tr("管理额度来源"), self)
@@ -116,6 +119,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_refresh)
         self._menu.addAction(self.action_autostart)
         self._menu.addAction(self.action_phone)
+        self._menu.addAction(self.action_push_url)
         self._menu.addAction(self.action_notify)
         self._menu.addAction(self.action_wizard)
         self._menu.addAction(self.action_providers)
@@ -195,13 +199,31 @@ class QuotaTray(QObject):
                 tips.append(lan)
             self.action_phone.setToolTip("\n".join(tips))  # 悬停可见全部地址
 
-    def _copy_ntfy_topic(self) -> None:
-        from PyQt6.QtGui import QGuiApplication
+    def _push_phone_url(self) -> None:
+        """按需把当前访问地址推到 ntfy：想用手机看时点一下，手机点通知直接打开。"""
+        url = self._hud.public_url or self._hud.web_url
+        notifier = self._hud.notifier
+        if url and notifier is not None:
+            ok = notifier.publish(
+                "codex-quota",
+                f"📱 手机访问地址（点通知直接打开）：\n{url}",
+                tags="link", click=url)
+            tip = url if ok else tr("推送失败（网络或 ntfy 服务不可达）")
+        elif notifier is None:
+            tip = tr("未开启 ntfy 通知，无法推送")
+        else:
+            tip = tr("未开启手机访问，没有可推送的地址")
+        self.action_push_url.setToolTip(tip)
+        self.tray.showMessage(tr("Codex 额度"), tip, QSystemTrayIcon.MessageIcon.Information, 3000)
 
-        notifier = getattr(self._hud, "notifier", None)
-        if notifier is not None and notifier.topic:
-            QGuiApplication.clipboard().setText(notifier.topic)
-            self.action_notify.setToolTip(notifier.subscribe_url)
+    def _open_notify_guide(self) -> None:
+        notifier = self._hud.notifier
+        if notifier is None or not notifier.topic:
+            self.action_notify.setToolTip(tr("未开启 ntfy 通知"))
+            return
+        from .notify_dialog import NotifyGuideDialog
+
+        NotifyGuideDialog(notifier, parent=self._hud).exec()
 
     def _open_wizard(self) -> None:
         from .wizard import SetupWizardDialog

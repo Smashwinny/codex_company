@@ -186,6 +186,8 @@ class FloatingHud(QWidget):
         self._settings = Settings()
         self._watcher = ResetWatcher()
         self.notifier = None  # NtfyNotifier，由 __main__ 装配（None=不推送）
+        self.web_url = None      # 局域网访问地址（web_enabled 时由 __main__ 装配）
+        self.public_url = None   # 公网隧道地址（tunnel_enabled 且隧道可用时）
         self._fetcher: Optional[QuotaFetcher] = None
         self._any_success = False
         self._drag_pos: Optional[QPoint] = None
