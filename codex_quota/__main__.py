@@ -44,19 +44,33 @@ def _run_hud(args: list[str]) -> int:
     from .providers import default_providers
     from .ui import FloatingHud
 
-    # 清扫上轮异常退出遗留的子进程（kill -9/断电场景兜底）
+    app = QApplication([sys.argv[0], *args])
+    app.setApplicationName("codex-quota")
+
+    # 单实例必须最先判定（QApplication 之后、其余一切之前）：
+    # 第二实例通知已有实例 raise 窗口后立即退出——否则它会先跑 janitor
+    # 把第一实例正在运行的 cloudflared/kimi-web 当"孤儿"杀掉，还会
+    # 重复占端口、起第二条隧道
+    from .single_instance import SingleInstance
+
+    single = SingleInstance()
+    if not single.try_acquire():
+        return 0
+
+    # 清扫上轮异常退出遗留的子进程（kill -9/断电场景兜底）。
+    # 过了单实例判定才来清扫：此刻必然没有其他存活的实例
     from .janitor import cleanup_orphans
 
     swept = cleanup_orphans()
     if swept:
         logging.getLogger("codex_quota").info("清理上轮遗留进程 %d 个", swept)
 
-    app = QApplication([sys.argv[0], *args])
-    app.setApplicationName("codex-quota")
     providers = default_providers()
     hud = FloatingHud(providers)
     hud.restore_position()
     settings = hud._settings
+    single.set_raise_callback(
+        lambda: (hud.show(), hud.raise_(), hud.activateWindow()))
 
     # 告警阈值（黄线/红线）：settings.json 或托盘菜单"告警阈值"可调
     from .ui.widgets import set_thresholds
@@ -243,6 +257,16 @@ def _run_hud(args: list[str]) -> int:
             web_server.stop()
         for p in providers:
             p.close()  # 释放 kimi web 等保活进程
+        # 子进程已全部回收，清掉 pidfile——正常退出的实例不留"孤儿"记录，
+        # 下次启动 sweep 只会命中真正被强杀遗留的进程
+        import os as _os
+
+        from .sysdirs import cache_dir as _cache_dir
+
+        try:
+            _os.remove(_os.path.join(_cache_dir(), "children.pid"))
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
