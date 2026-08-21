@@ -69,8 +69,9 @@ class NotifyGuideDialog(QDialog):
         cmd_card, cmd_lay = _card()
         cmd_lay.addWidget(self._section(tr("② 反向触发（想用手机看时，主动要地址）")))
         cmd_lay.addWidget(self._hint(tr(
-            "在 ntfy App 里再订阅下面的命令主题；想用手机看仪表盘时，"
-            "向它发送 url ——电脑会立刻回推当前访问地址，点通知直接打开网页")))
+            "在 ntfy App 里再订阅下面的命令主题。想用手机看仪表盘时向它发送 url "
+            "——电脑回推当前地址，点通知直达网页；发送 列表 查看各额度提醒开关；"
+            "发送 kimi5、spark 这类关键词可直接开/关对应窗口的重置提醒")))
         cmd_lay.addLayout(self._copy_row(tr("命令主题"), cmd_topic))
         lay.addWidget(cmd_card)
 

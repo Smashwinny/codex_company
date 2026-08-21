@@ -72,8 +72,8 @@ _EN: dict[str, str] = {
     "订阅链接": "Subscribe URL",
     "② 反向触发（想用手机看时，主动要地址）":
         "2. Trigger from phone (ask for the URL on demand)",
-    "在 ntfy App 里再订阅下面的命令主题；想用手机看仪表盘时，向它发送 url ——电脑会立刻回推当前访问地址，点通知直接打开网页":
-        "Also subscribe to the command topic below; to view the dashboard, send 'url' to it — the PC immediately pushes back the current URL, tap to open",
+    "在 ntfy App 里再订阅下面的命令主题。想用手机看仪表盘时向它发送 url ——电脑回推当前地址，点通知直达网页；发送 列表 查看各额度提醒开关；发送 kimi5、spark 这类关键词可直接开/关对应窗口的重置提醒":
+        "Also subscribe to the command topic below. Send 'url' to get the current access URL (tap to open); send '列表' to see alert switches; send keywords like kimi5/spark to toggle a window's reset alert",
     "命令主题": "Command topic",
     "③ 验证": "3. Verify",
     "发送测试推送": "Send test push",
@@ -95,6 +95,9 @@ _EN: dict[str, str] = {
         "≤ {w}% left shows yellow, ≤ {c}% shows red",
     # 取色来源
     "主模型显示": "Primary model display",
+    "重置提醒": "Reset alerts",
+    "勾选的额度桶回满 100% 时推送手机通知":
+        "Checked buckets push to phone when refilled to 100%",
     "（暂无数据）": "(no data yet)",
     "勾选参与取色，图标按勾选项的最低剩余量变色":
         "Checked items set the icon color (worst remaining wins)",

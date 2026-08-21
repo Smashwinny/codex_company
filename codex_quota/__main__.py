@@ -131,25 +131,26 @@ def _run_hud(args: list[str]) -> int:
                 f"📱 手机访问地址（点通知直接打开）：\n{url}",
                 tags="link", click=url)
 
-    # 手机反向触发：向 <主题>-cmd 发 "url" → 回推当前访问地址（点通知直达网页）。
-    # 回调读取的是触发时刻的 hud.public_url，隧道重连换新地址后也始终推最新值
+    # 手机反向触发：向 <主题>-cmd 发命令 → 回推结果（点通知直达网页）。
+    # url=要地址；列表=看重置提醒开关；kimi5/spark 等关键词=切换对应提醒。
+    # 地址类回调读取的是触发时刻的 hud.public_url，隧道重连后始终推最新值
     cmd_listener = None
     if hud.notifier is not None and (hud.public_url or hud.web_url):
         from .notify import NtfyCommandListener
+        from .remote_cmd import handle_command
 
-        def _push_url_on_demand():
-            url = hud.public_url or hud.web_url
-            if url:
-                hud.notifier.publish(
-                    "codex-quota",
-                    f"📱 手机访问地址（点通知直接打开）：\n{url}",
-                    tags="link", click=url)
+        def _on_phone_command(msg: str):
+            body, click = handle_command(msg, hud._current_views(), settings,
+                                         url=hud.public_url or hud.web_url)
+            if body:
+                hud.notifier.publish("codex-quota", body, tags="link", click=click)
 
         cmd_topic = hud.notifier.topic + "-cmd"
         cmd_listener = NtfyCommandListener(hud.notifier.server, cmd_topic,
-                                           _push_url_on_demand)
+                                           _on_phone_command)
         cmd_listener.start()
-        print(f"手机触发推送: ntfy 向主题 {cmd_topic} 发送 url 即回推访问地址",
+        print(f"手机远程命令: ntfy 向主题 {cmd_topic} 发送 "
+              f"url（要地址）/ 列表（看提醒开关）/ kimi5 等关键词（切换提醒）",
               file=sys.stderr)
 
     if QSystemTrayIcon.isSystemTrayAvailable():

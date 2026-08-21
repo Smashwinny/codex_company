@@ -19,6 +19,7 @@ from collections import deque
 from typing import Callable, Optional
 
 from .app_server import QuotaSnapshot
+from .state import key_excluded
 
 RESET_THRESHOLD = 99.5  # 剩余量跨过此线视为"重置回满"
 DEFAULT_NTFY_SERVER = "https://ntfy.sh"
@@ -31,8 +32,11 @@ class ResetWatcher:
         self._threshold = threshold
         self._last: dict[tuple[str, str, str], float] = {}
 
-    def check(self, provider: str, snap: QuotaSnapshot) -> list[str]:
-        """返回本次新发生的重置事件描述列表（多数时候为空）。"""
+    def check(self, provider: str, snap: QuotaSnapshot,
+              excludes: frozenset[str] = frozenset()) -> list[str]:
+        """返回本次新发生的重置事件描述列表（多数时候为空）。
+        excludes 排除的 "provider:桶:窗口"（或桶级前缀）不产生事件，
+        但状态照常跟踪——重新勾选后不会因"排除期间刚好回满"补发假事件。"""
         events: list[str] = []
         for limit in snap.limits:
             bucket = limit.limit_name or limit.limit_id
@@ -42,8 +46,14 @@ class ResetWatcher:
                 key = (provider, bucket, w.label)
                 prev = self._last.get(key)
                 cur = w.remaining_percent
-                if prev is not None and prev < self._threshold <= cur:
-                    events.append(f"{provider} · {bucket} · {w.label}")
+                excluded = key_excluded(f"{provider}:{bucket}:{w.label}", excludes)
+                if (prev is not None and prev < self._threshold <= cur
+                        and not excluded):
+                    # 事件不含 provider（调用方知道是谁）；主限额不带桶名，
+                    # 与托盘摘要/勾选标签的展示习惯一致
+                    event = w.label if limit is snap.primary_limit \
+                        else f"{bucket} · {w.label}"
+                    events.append(event)
                 self._last[key] = cur
         return events
 
@@ -88,21 +98,29 @@ class NtfyNotifier:
             return False
 
 
+def _ascii_title(display_name: str) -> str:
+    """ntfy 的 Title 头只支持 ASCII——把 provider 显示名放进标题，
+    锁屏上一眼看出是谁的额度回满（之前标题固定 codex-quota，分不清）。"""
+    name = display_name.encode("ascii", "ignore").decode().strip()
+    return f"{name} quota reset" if name else "codex-quota"
+
+
 def notify_resets(notifier: Optional[NtfyNotifier], watcher: ResetWatcher,
-                  provider: str, display_name: str, snap: QuotaSnapshot) -> list[str]:
-    """检测 + 推送；返回触发的事件列表（供日志/测试）。"""
-    events = watcher.check(provider, snap)
+                  provider: str, display_name: str, snap: QuotaSnapshot,
+                  excludes: frozenset[str] = frozenset()) -> list[str]:
+    """检测 + 推送；返回触发的事件列表（供日志/测试）。excludes 同 check。"""
+    events = watcher.check(provider, snap, excludes)
     if notifier is not None:
         for event in events:
             notifier.publish(
-                "codex-quota",
-                f"✅ 额度已重置回 100%：{display_name}（{event}）",
+                _ascii_title(display_name),
+                f"✅ {display_name} 额度已重置回 100%（{event}）",
             )
     return events
 
 
 class NtfyCommandListener:
-    """后台线程订阅 ntfy 命令主题的 JSON 流，收到触发词即回调。
+    """后台线程订阅 ntfy 命令主题的 JSON 流，每条消息回调给命令处理器。
 
     since=启动时刻的时间戳：只响应启动后新发的命令（ntfy 不接受 since=now，
     只认时间戳/时长/all）；重连用最近一条消息的时间戳，断线窗口内的命令不丢，
@@ -111,12 +129,11 @@ class NtfyCommandListener:
     攻击者得不到任何信息。
     """
 
-    def __init__(self, server: str, topic: str, on_trigger: Callable[[], None], *,
-                 triggers: tuple[str, ...] = ("url", "地址"), timeout: float = 120.0):
+    def __init__(self, server: str, topic: str, on_command: Callable[[str], None], *,
+                 timeout: float = 120.0):
         self.server = server.rstrip("/")
         self.topic = topic
-        self._on_trigger = on_trigger
-        self._triggers = tuple(t.lower() for t in triggers)
+        self._on_command = on_command
         self._timeout = timeout
         self._since = int(time.time())      # 只收启动之后的消息
         self._seen_ids: deque = deque(maxlen=200)  # 重连重投递去重
@@ -184,9 +201,9 @@ class NtfyCommandListener:
         ts = evt.get("time")
         if isinstance(ts, int) and ts > self._since:
             self._since = ts  # 下次重连从这里续，不丢断线窗口内的命令
-        msg = (evt.get("message") or "").strip().lower()
-        if any(t in msg for t in self._triggers):
+        msg = (evt.get("message") or "").strip()
+        if msg:
             try:
-                self._on_trigger()
+                self._on_command(msg)
             except Exception:
                 pass  # 回调失败不拖垮监听线程

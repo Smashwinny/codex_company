@@ -331,7 +331,8 @@ class FloatingHud(QWidget):
             logger.info("provider %s 已恢复", provider)
         display = next((p.display_name for p in self._providers if p.name == provider),
                        provider)
-        notify_resets(self.notifier, self._watcher, provider, display, snap)
+        notify_resets(self.notifier, self._watcher, provider, display, snap,
+                      frozenset(self._settings.get("notify_excludes") or []))
         self._apply()
 
     def _on_error(self, provider: str, message: str) -> None:

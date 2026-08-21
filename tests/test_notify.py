@@ -42,7 +42,7 @@ class TestResetWatcher:
         w.check("codex", snap_with(weekly_used=91))
         events = w.check("codex", snap_with(weekly_used=0))   # 重置回满
         assert len(events) == 1
-        assert "codex" in events[0] and "本周" in events[0]
+        assert "本周" in events[0]  # 事件不含 provider（调用方知道是谁）
         assert w.check("codex", snap_with(weekly_used=0)) == []  # 不重复
 
     def test_normal_decline_no_event(self):
@@ -72,6 +72,33 @@ class TestResetWatcher:
         snap = snap_with(weekly_used=91)
         snap.primary_limit.primary.used_percent = None
         assert w.check("codex", snap) == []
+
+    def test_excludes_suppress_but_keep_tracking(self):
+        """排除的桶回满不报，但状态照常跟踪——重新勾选后不补发假事件。"""
+        w = ResetWatcher()
+        bucket = (codex_snapshot().primary_limit.limit_name
+                  or codex_snapshot().primary_limit.limit_id)
+        key = f"codex:{bucket}"
+        w.check("codex", snap_with(weekly_used=50))   # 剩 50%
+        full = snap_with(weekly_used=0)               # 回满 100%
+        # 排除：不产生事件
+        assert w.check("codex", full, frozenset({key})) == []
+        # 重新纳入：不补发排除期间的事件（prev 已更新为回满值）
+        assert w.check("codex", full) == []
+        # 之后再消耗 → 回满，正常报
+        w.check("codex", snap_with(weekly_used=50))
+        assert len(w.check("codex", snap_with(weekly_used=0))) == 1
+
+    def test_excludes_window_level(self):
+        """窗口级排除：只排除"本周"，同桶"5小时"回满仍报。"""
+        w = ResetWatcher()
+        bucket = (codex_snapshot().primary_limit.limit_name
+                  or codex_snapshot().primary_limit.limit_id)
+        w.check("codex", snap_with(weekly_used=50, hourly_used=50))
+        events = w.check("codex", snap_with(weekly_used=0, hourly_used=0),
+                         frozenset({f"codex:{bucket}:本周"}))
+        assert len(events) == 1
+        assert "5小时" in events[0]
 
 
 class _Capture:
@@ -142,7 +169,7 @@ class TestNotifyResets:
 
         class FakeNotifier:
             def publish(self, title, body, **kw):
-                sent.append(body)
+                sent.append((title, body))
                 return True
 
         watcher = ResetWatcher()
@@ -151,7 +178,26 @@ class TestNotifyResets:
         events = notify_resets(FakeNotifier(), watcher, "codex", "Codex",
                                snap_with(0))
         assert len(events) == 1
-        assert len(sent) == 1 and "Codex" in sent[0]
+        title, body = sent[0]
+        assert "Codex" in title  # provider 进标题：锁屏一眼看出是谁回满
+        assert "Codex" in body and "100%" in body
+
+    def test_title_falls_back_for_non_ascii_name(self):
+        """显示名含非 ASCII 时标题安全兜底（ntfy Title 头只支持 ASCII）。"""
+        sent = []
+
+        class FakeNotifier:
+            def publish(self, title, body, **kw):
+                sent.append(title)
+                return True
+
+        watcher = ResetWatcher()
+        notify_resets(FakeNotifier(), watcher, "kimi", "月之暗面",
+                      snap_with(91))
+        notify_resets(FakeNotifier(), watcher, "kimi", "月之暗面",
+                      snap_with(0))
+        assert sent[0] == "codex-quota"
+        sent[0].encode("ascii")  # 必须能纯 ASCII 编码
 
     def test_no_notifier_still_detects(self):
         watcher = ResetWatcher()
@@ -165,31 +211,30 @@ def _msg(text):
 
 
 class TestNtfyCommandListener:
-    """_handle 纯逻辑 + 真实 NDJSON 流的端到端。"""
+    """_handle 纯逻辑 + 真实 NDJSON 流的端到端。消息原样转发给命令处理器。"""
 
     def _listener(self, hits):
-        return NtfyCommandListener("http://unused", "t", lambda: hits.append(1))
+        return NtfyCommandListener("http://unused", "t", lambda m: hits.append(m))
 
-    def test_trigger_words(self):
+    def test_message_forwarded_verbatim(self):
         hits = []
         li = self._listener(hits)
         li._handle(_msg("url"))
-        li._handle(_msg("URL"))          # 大小写不敏感
-        li._handle(_msg("  地址  "))      # 首尾空白容忍
-        li._handle(_msg("发个url给我"))   # 包含触发词即可
-        assert len(hits) == 4
+        li._handle(_msg("kimi5"))        # 不再过滤触发词，所有消息都进命令处理器
+        li._handle(_msg("  带空白  "))    # 仅去首尾空白，内容原样
+        assert hits == ["url", "kimi5", "带空白"]
 
-    def test_non_trigger_ignored(self):
+    def test_non_message_ignored(self):
         hits = []
         li = self._listener(hits)
-        li._handle(_msg("hello"))
         li._handle(json.dumps({"event": "keepalive"}).encode())  # 非 message 事件
         li._handle(b"not json")                                   # 坏行
         li._handle(json.dumps({"event": "message"}).encode())     # 无 message 字段
+        li._handle(_msg("   "))                                   # 空消息
         assert hits == []
 
     def test_callback_exception_swallowed(self):
-        def boom():
+        def boom(_msg):
             raise RuntimeError("x")
 
         li = NtfyCommandListener("http://unused", "t", boom)
@@ -214,7 +259,7 @@ class TestNtfyCommandListener:
         try:
             hits = []
             li = NtfyCommandListener(f"http://127.0.0.1:{srv.server_port}", "t",
-                                     lambda: hits.append(1), timeout=2)
+                                     lambda m: hits.append(m), timeout=2)
             li.start()
             for _ in range(50):  # 最多等 5s
                 if hits:
