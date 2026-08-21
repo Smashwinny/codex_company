@@ -35,6 +35,20 @@ cd codex_company
 → 创建应用菜单桌面入口（含图标）→ 软链 `codex-quota` 命令到 `~/.local/bin`。
 幂等，可重复运行；交互终端下装完会问是否立即启动。
 
+### Windows
+
+```powershell
+git clone https://github.com/Smashwinny/codex_company.git
+cd codex_company
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+与 Linux 版一致的流程：检查依赖 → 创建 `.venv` 装 PyQt6 → 下载
+`cloudflared-windows-amd64.exe` → 创建开始菜单快捷方式（**Codex Quota**，黄色闪电图标）。
+启动：开始菜单搜索 Codex Quota，或 `bin\codex-quota.cmd`。开机自启走注册表
+Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\codex-quota\`，
+日志在 `%LOCALAPPDATA%\codex-quota\hud.log`。
+
 ### 运行（三选一）
 
 | 方式 | 命令/操作 |
