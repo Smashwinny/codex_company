@@ -20,7 +20,6 @@ import os
 import queue
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import threading
@@ -30,6 +29,7 @@ import urllib.request
 from datetime import datetime
 from typing import Any, Optional
 
+from .. import proc
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
 
 logger = logging.getLogger("codex_quota.kimi")
@@ -142,13 +142,13 @@ class KimiProvider:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
 
-        self._proc = subprocess.Popen(
+        self._proc = proc.spawn_detached(
             self._spawn_args(port),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            start_new_session=True,  # 独立进程组，close 时 killpg 一锅端
         )
+        proc.record_child(self._proc.pid, "kimi-web")
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
@@ -176,17 +176,9 @@ class KimiProvider:
         raise KimiError("kimi web 启动超时或未输出 Token")
 
     def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=2)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        proc_, self._proc = self._proc, None
+        if proc_ is not None:
+            proc.kill_tree(proc_, timeout=2)
 
     # ---------- 查询 ----------
 

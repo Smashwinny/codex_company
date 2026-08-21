@@ -15,11 +15,12 @@ import os
 import queue
 import re
 import shutil
-import signal
 import subprocess
 import threading
 import time
 from typing import Optional
+
+from . import proc
 
 TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
@@ -80,14 +81,14 @@ class Tunnel:
         if self._bin is None:
             raise TunnelError("未找到 cloudflared（运行 install.sh 会自动下载）")
         self.stop()
-        self._proc = subprocess.Popen(
+        self._proc = proc.spawn_detached(
             [self._bin, "tunnel", "--url", f"http://127.0.0.1:{self._local_port}",
              "--no-autoupdate"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,  # 地址打在 stderr
             text=True,
-            start_new_session=True,
         )
+        proc.record_child(self._proc.pid, "cloudflared")
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
@@ -119,15 +120,7 @@ class Tunnel:
         raise TunnelError("cloudflared 启动超时或未输出公网地址")
 
     def stop(self) -> None:
-        proc, self._proc = self._proc, None
+        proc_, self._proc = self._proc, None
         self.public_url = None
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=3)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        if proc_ is not None:
+            proc.kill_tree(proc_, timeout=3)
