@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
@@ -34,6 +35,7 @@ class TestFindBinary:
         assert result is None or os.path.isfile(result)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组/执行位语义，Windows 分支由 test_proc 等注入式测试覆盖")
 class TestTunnelLifecycle:
     def test_url_parsed_from_stderr(self, fake_cloudflared):
         t = Tunnel(local_port=8642, cloudflared_bin=fake_cloudflared, startup_timeout=10)

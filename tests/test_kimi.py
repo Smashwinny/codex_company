@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -170,6 +171,7 @@ class TestKimiHttpFetch:
         assert snap.primary_limit.primary.used_percent == pytest.approx(13.0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组/执行位语义，Windows 分支由 test_proc 等注入式测试覆盖")
 class TestKimiProcessLifecycle:
     @pytest.fixture
     def fake_kimi(self, tmp_path):

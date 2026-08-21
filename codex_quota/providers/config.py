@@ -91,7 +91,8 @@ def save_providers_config(cfg: dict[str, dict[str, Any]],
         lines.append("")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
-    os.chmod(path, 0o600)
+    if os.name == "posix":
+        os.chmod(path, 0o600)  # Windows 无 POSIX 权限位，%APPDATA% 目录 ACL 等价单用户保护
     return path
 
 

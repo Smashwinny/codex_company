@@ -7,6 +7,7 @@ fixture 来自 2026-08-12 在本机（codex-cli 0.147.0, prolite 套餐）对
 from __future__ import annotations
 
 import pytest
+import sys
 
 from codex_quota.app_server import (
     AppServerError,
@@ -148,6 +149,7 @@ class TestEdgeCases:
         assert len(snap.limits) == 1
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组/执行位语义，Windows 分支由 test_proc 等注入式测试覆盖")
 class TestFindCodexBin:
     def test_nvm_fallback(self, tmp_path, monkeypatch):
         """PATH 没有 codex 时，回退搜索 ~/.nvm/versions/node/*/bin/codex。"""

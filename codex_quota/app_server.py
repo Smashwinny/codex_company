@@ -15,6 +15,7 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -143,27 +144,40 @@ class QuotaSnapshot:
 def find_codex_bin() -> str:
     """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖。
 
-    PATH 找不到时回退搜索 nvm 版本目录——nvm 切换默认 Node 版本后，
-    装在旧版本全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，
-    nvm 切到 v24 后"未找到 codex"）。
+    PATH 找不到时回退搜索：
+    - Linux/mac: nvm 版本目录——nvm 切换默认 Node 版本后，装在旧版本
+      全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，nvm 切到
+      v24 后"未找到 codex"）
+    - Windows: npm 全局目录的 codex.cmd（X_OK 无执行位语义，不查）
     """
+    is_win = sys.platform == "win32"
+
+    def _executable(path: str) -> bool:
+        if not os.path.isfile(path):
+            return False
+        return True if is_win else os.access(path, os.X_OK)
+
     override = os.environ.get("CODEX_BIN")
     if override:
-        if os.path.isfile(override) and os.access(override, os.X_OK):
+        if _executable(override):
             return override
         raise CodexNotFoundError(f"CODEX_BIN 指向的文件不可执行: {override}")
-    path = shutil.which("codex")
+    path = shutil.which("codex")  # Windows 下 PATHEXT 已覆盖 codex.cmd
     if path is not None:
         return path
     import glob
 
-    nvm_candidates = sorted(
-        glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions", "node",
-                               "*", "bin", "codex")),
-        reverse=True,  # 版本号大的优先
-    )
-    for candidate in nvm_candidates:
-        if os.access(candidate, os.X_OK):
+    if is_win:
+        candidates = [os.path.join(os.environ.get("APPDATA") or "", "npm",
+                                   "codex.cmd")]
+    else:
+        candidates = sorted(
+            glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions",
+                                   "node", "*", "bin", "codex")),
+            reverse=True,  # 版本号大的优先
+        )
+    for candidate in candidates:
+        if _executable(candidate):
             return candidate
     raise CodexNotFoundError(
         "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
@@ -297,8 +311,10 @@ class AppServerClient:
         self.timeout = timeout
 
     def read_rate_limits(self) -> QuotaSnapshot:
+        from .proc import wrap_cmd_shim
+
         proc = subprocess.Popen(
-            [self.codex_bin, "app-server"],
+            wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

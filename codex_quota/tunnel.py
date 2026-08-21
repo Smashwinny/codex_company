@@ -16,6 +16,7 @@ import queue
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import Optional
@@ -49,12 +50,14 @@ class RestartPolicy:
 
 
 def find_cloudflared() -> Optional[str]:
-    """定位 cloudflared：PATH → 项目 vendor/bin/。找不到返回 None（仅局域网模式）。"""
+    """定位 cloudflared：PATH → 项目 vendor/bin/（Windows 为 cloudflared.exe）。
+    找不到返回 None（仅局域网模式）。"""
     found = shutil.which("cloudflared")
     if found:
         return found
+    name = "cloudflared.exe" if sys.platform == "win32" else "cloudflared"
     vendor = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "vendor", "bin", "cloudflared")
+                          "vendor", "bin", name)
     return vendor if os.path.isfile(vendor) else None
 
 
