@@ -2,6 +2,8 @@
 
 - QuotaFetcher：把阻塞的 app-server 查询放到 QThread，结果经 signal 回主线程。
   每次刷新新建一个线程实例（QThread 不可重启），由 HUD 持有引用防止被 GC。
+  单个 provider 失败隔 3s 同周期重试一次——上游（chatgpt.com）瞬时抖动很常见，
+  不立即重试的话要等下个 60s 周期，连续几次失败就是几分钟数据陈旧。
 - RefreshScheduler：决定下一次自动刷新的间隔——
   可见 60s / 隐藏 180s；检测到 codex 会话活跃（~/.codex/sessions 有新写入）30s；
   连续失败指数退避 30s×2^n，封顶 5min；成功后重置。
@@ -20,6 +22,8 @@ from .app_server import codex_home
 
 logger = logging.getLogger("codex_quota.fetcher")
 
+RETRY_DELAY_S = 3.0  # 同周期重试间隔
+
 
 class QuotaFetcher(QThread):
     succeeded = pyqtSignal(str, object)  # provider name, QuotaSnapshot
@@ -34,12 +38,22 @@ class QuotaFetcher(QThread):
         # 顺序查询各 provider；单个失败不影响其他
         for p in self._providers:
             t0 = time.monotonic()
-            try:
-                snap = p.fetch()
-            except Exception as exc:  # 兜底：任何意外都不能让线程裸崩
+            err: Optional[Exception] = None
+            for attempt in (1, 2):
+                try:
+                    snap = p.fetch()
+                    err = None
+                    break
+                except Exception as exc:  # 兜底：任何意外都不能让线程裸崩
+                    err = exc
+                    if attempt == 1:
+                        logger.info("provider %s 首次失败（%.1fs），同周期重试: %s",
+                                    p.name, time.monotonic() - t0, exc)
+                        time.sleep(RETRY_DELAY_S)
+            if err is not None:
                 logger.warning("provider %s 查询失败（%.1fs）: %s",
-                               p.name, time.monotonic() - t0, exc)
-                self.failed.emit(p.name, str(exc))
+                               p.name, time.monotonic() - t0, err)
+                self.failed.emit(p.name, str(err))
                 continue
             elapsed = time.monotonic() - t0
             if elapsed > 5:

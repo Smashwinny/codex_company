@@ -18,6 +18,14 @@ from codex_quota.fetcher import (
 from tests.conftest import FakeProvider, codex_snapshot
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_sleep(monkeypatch):
+    """重试间隔打桩为零——测行为，不测等待（fetcher 失败后会 sleep 3s 重试）。"""
+    import codex_quota.fetcher as fetcher_mod
+
+    monkeypatch.setattr(fetcher_mod.time, "sleep", lambda *_: None)
+
+
 class TestScheduler:
     def test_visible_idle(self):
         s = RefreshScheduler()
@@ -110,6 +118,51 @@ class TestMultiProviderFetch:
         fetcher.failed.connect(lambda name, e: bad.append(name))
         fetcher.run()
         assert bad == ["codex"]
+
+
+class FlakyProvider(FakeProvider):
+    """前 fail_times 次抛错，之后返回正常快照。"""
+
+    def __init__(self, name="codex", fail_times=1):
+        super().__init__(name, snapshot=codex_snapshot())
+        self._fail_times = fail_times
+        self.calls = 0
+
+    def fetch(self):
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise RuntimeError("flaky")
+        return self._snapshot
+
+
+class TestFetcherRetry:
+    """同周期重试：首次失败隔 3s（已打桩）再试一次，之后才上报失败。"""
+
+    def test_retry_recovers(self, qapp):
+        pytest.importorskip("PyQt6")
+        from codex_quota.fetcher import QuotaFetcher
+
+        p = FlakyProvider(fail_times=1)
+        fetcher = QuotaFetcher([p])
+        ok, bad = [], []
+        fetcher.succeeded.connect(lambda name, s: ok.append(name))
+        fetcher.failed.connect(lambda name, e: bad.append(name))
+        fetcher.run()
+        assert ok == ["codex"] and bad == []
+        assert p.calls == 2
+
+    def test_retry_exhausted_fails_once(self, qapp):
+        pytest.importorskip("PyQt6")
+        from codex_quota.fetcher import QuotaFetcher
+
+        p = FlakyProvider(fail_times=99)  # 永远失败
+        fetcher = QuotaFetcher([p])
+        ok, bad = [], []
+        fetcher.succeeded.connect(lambda name, s: ok.append(name))
+        fetcher.failed.connect(lambda name, e: bad.append(name))
+        fetcher.run()
+        assert ok == [] and bad == ["codex"]  # 两次都败，只上报一次
+        assert p.calls == 2
 
 
 @pytest.fixture(scope="session")
