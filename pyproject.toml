@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codex-quota"
-version = "0.1.0"
+version = "0.2.0"
 description = "Linux 桌面端 Codex 额度实时显示（CLI + 悬浮窗）"
 readme = "README.md"
 requires-python = ">=3.10"
