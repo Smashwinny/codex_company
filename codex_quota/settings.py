@@ -1,4 +1,4 @@
-"""轻量设置持久化：~/.config/codex-quota/settings.json（XDG_CONFIG_HOME 优先）。
+"""轻量设置持久化（路径由 sysdirs.config_dir() 按平台分发）。
 
 仅存 UI 偏好（透明度、紧凑模式、窗口位置），损坏时回退默认值。
 """
@@ -10,10 +10,11 @@ import os
 import tempfile
 from typing import Any, Optional
 
+from .sysdirs import config_dir
+
 
 def default_settings_path() -> str:
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "codex-quota", "settings.json")
+    return os.path.join(config_dir(), "settings.json")
 
 
 DEFAULTS: dict[str, Any] = {

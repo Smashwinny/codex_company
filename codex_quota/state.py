@@ -15,15 +15,16 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .app_server import QuotaSnapshot, snapshot_from_dict, snapshot_to_dict
+from .sysdirs import cache_dir
 
 CACHE_MAX_AGE_S = 24 * 3600  # 超过 24 小时的缓存视为无效
 
 
 def default_cache_path(provider: str = "codex") -> str:
-    """每个 provider 一个缓存文件；codex 沿用 last-good.json（向后兼容）。"""
-    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    """每个 provider 一个缓存文件；codex 沿用 last-good.json（向后兼容）。
+    目录由 sysdirs.cache_dir() 按平台分发。"""
     filename = "last-good.json" if provider == "codex" else f"last-good-{provider}.json"
-    return os.path.join(base, "codex-quota", filename)
+    return os.path.join(cache_dir(), filename)
 
 
 @dataclass

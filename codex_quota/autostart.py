@@ -1,6 +1,7 @@
-"""开机自启：freedesktop autostart 规范（~/.config/autostart/codex-quota.desktop）。
+"""开机自启：freedesktop autostart 规范（<config 根>/autostart/codex-quota.desktop）。
 
 Exec 使用当前解释器路径（venv 中的 python 也能正确指回本项目）。
+配置根目录由 sysdirs 分发（XDG_CONFIG_HOME 优先，跨平台）。
 """
 
 from __future__ import annotations
@@ -9,12 +10,14 @@ import os
 import sys
 from typing import Optional
 
+from .sysdirs import config_dir
+
 DESKTOP_FILENAME = "codex-quota.desktop"
 
 
 def autostart_dir() -> str:
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(base, "autostart")
+    """freedesktop autostart 目录 = 配置根目录的上一级 + autostart。"""
+    return os.path.join(os.path.dirname(config_dir()), "autostart")
 
 
 def desktop_entry(exec_cmd: Optional[str] = None) -> str:
