@@ -19,6 +19,17 @@ def main() -> int:
 
 
 def _run_hud(args: list[str]) -> int:
+    # Windows pythonw.exe 下 sys.stdout/sys.stderr 都是 None——不先接到日志文件，
+    # 任何 print(..., file=sys.stderr)/logging 都 AttributeError，且无控制台无
+    # 日志，表现为"静默起不来"。这是 Windows 兼容里最高优先的一处。
+    import os
+
+    if sys.stderr is None:
+        from .sysdirs import cache_dir, log_path
+
+        os.makedirs(cache_dir(), exist_ok=True)
+        sys.stdout = sys.stderr = open(log_path(), "a", encoding="utf-8",
+                                       buffering=1)
     try:
         from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
     except ImportError:
@@ -33,7 +44,7 @@ def _run_hud(args: list[str]) -> int:
 
     from PyQt6.QtCore import QTimer
 
-    # 日志进 stderr → 启动器重定向到 ~/.cache/codex-quota/hud.log
+    # 日志进 stderr → 启动器重定向（POSIX）或上面的守卫（pythonw）写 hud.log
     logging.basicConfig(
         stream=sys.stderr,
         level=logging.INFO,
@@ -56,6 +67,18 @@ def _run_hud(args: list[str]) -> int:
     single = SingleInstance()
     if not single.try_acquire():
         return 0
+
+    # 记录主进程 PID（.cmd 启动器/未来 exe 的存活探测用）；过了单实例判定
+    # 才写，第二实例不覆盖第一实例的 app.pid
+    from .sysdirs import cache_dir
+
+    app_pid_path = os.path.join(cache_dir(), "app.pid")
+    try:
+        os.makedirs(cache_dir(), exist_ok=True)
+        with open(app_pid_path, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        app_pid_path = ""  # 写不进就不提供该能力
 
     # 清扫上轮异常退出遗留的子进程（kill -9/断电场景兜底）。
     # 过了单实例判定才来清扫：此刻必然没有其他存活的实例
@@ -239,8 +262,11 @@ def _run_hud(args: list[str]) -> int:
         logging.getLogger("codex_quota").info("收到信号 %s，正在退出", signum)
         QApplication.quit()
 
-    signal.signal(signal.SIGTERM, _graceful_quit)
-    signal.signal(signal.SIGINT, _graceful_quit)
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _graceful_quit)
+        except (ValueError, OSError, AttributeError, RuntimeError):
+            pass  # Windows 无 POSIX 信号语义，注册失败不致命
     # Python 信号处理器只在解释器执行字节码时运行，app.exec() 阻塞在 C++ 层；
     # 用空 QTimer 周期唤醒解释器，让挂起的信号处理器得以及时执行
     _sig_timer = QTimer()
@@ -259,14 +285,15 @@ def _run_hud(args: list[str]) -> int:
             p.close()  # 释放 kimi web 等保活进程
         # 子进程已全部回收，清掉 pidfile——正常退出的实例不留"孤儿"记录，
         # 下次启动 sweep 只会命中真正被强杀遗留的进程
-        import os as _os
-
-        from .sysdirs import cache_dir as _cache_dir
-
         try:
-            _os.remove(_os.path.join(_cache_dir(), "children.pid"))
+            os.remove(os.path.join(cache_dir(), "children.pid"))
         except OSError:
             pass
+        if app_pid_path:
+            try:
+                os.remove(app_pid_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":
