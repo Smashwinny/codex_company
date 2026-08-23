@@ -22,7 +22,10 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 DEFAULT_TIMEOUT = 15.0  # 秒；超时即 kill 子进程（云端查询实测 2-8s，8s 太紧）
-CLIENT_INFO = {"name": "codex-quota", "version": "0.1.0"}
+from . import __version__
+
+
+CLIENT_INFO = {"name": "codex-quota", "version": __version__}
 
 
 class AppServerError(Exception):
@@ -311,15 +314,22 @@ class AppServerClient:
         self.timeout = timeout
 
     def read_rate_limits(self) -> QuotaSnapshot:
-        from .proc import wrap_cmd_shim
+        from .proc import popen_external, wrap_cmd_shim
 
-        proc = subprocess.Popen(
+        popen_kwargs: dict[str, Any] = {}
+        if sys.platform == "win32":
+            # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
+            # 不显式禁止窗口就可能在每次额度刷新时闪出黑框。
+            popen_kwargs["creationflags"] = getattr(
+                subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        proc = popen_external(
             wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            **popen_kwargs,
         )
         lines: queue.Queue[str] = queue.Queue()
 
@@ -375,6 +385,13 @@ class AppServerClient:
     @staticmethod
     def _reap(proc: subprocess.Popen) -> None:
         if proc.poll() is not None:
+            return
+        if sys.platform == "win32":
+            # npm 的 codex.cmd 会形成 cmd.exe -> node/codex 进程树；只 terminate
+            # 根 cmd 会留下 app-server。复用统一的 Windows taskkill /T 回收。
+            from .proc import kill_tree
+
+            kill_tree(proc, timeout=1)
             return
         proc.terminate()
         try:

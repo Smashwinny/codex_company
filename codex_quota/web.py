@@ -8,9 +8,12 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import secrets
 import socket
+import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +26,13 @@ from .state import ProviderView
 DEFAULT_PORT = 8642
 MAX_PORT_ATTEMPTS = 20
 
+_BENCHMARK_NET = ipaddress.ip_network("198.18.0.0/15")
+_RFC1918_NETS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
 # 与 HUD 一致的三档阈值（按剩余量）
 THRESHOLDS = {"warn": 30, "crit": 10}
 
@@ -31,14 +41,83 @@ def generate_token() -> str:
     return secrets.token_urlsafe(16)
 
 
+def _usable_lan_ipv4(value: str) -> bool:
+    """是否可作为手机访问地址。
+
+    198.18.0.0/15 常被代理/TUN 软件用作虚拟默认路由；它和 loopback、
+    link-local、CGNAT 等地址都不应出现在发给手机的 LAN URL 里。
+    """
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    if not isinstance(ip, ipaddress.IPv4Address) or ip in _BENCHMARK_NET:
+        return False
+    if ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_multicast:
+        return False
+    # 手机同网段通常是 RFC1918；也允许真实公网 IPv4 直连的少数网络。
+    return any(ip in network for network in _RFC1918_NETS) or ip.is_global
+
+
+def _parse_windows_default_routes(output: str) -> list[str]:
+    """从 ``route print -4`` 提取默认路由的接口 IPv4，按 metric 排序。"""
+    routes: list[tuple[int, str]] = []
+    for line in output.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[:2] != ["0.0.0.0", "0.0.0.0"]:
+            continue
+        interface = fields[3]
+        try:
+            metric = int(fields[4])
+        except ValueError:
+            continue
+        if _usable_lan_ipv4(interface):
+            routes.append((metric, interface))
+    return [interface for _, interface in sorted(routes)]
+
+
+def _windows_default_route_ips() -> list[str]:
+    """Windows 上列出真实默认路由；失败时由 lan_ip() 的 socket 路径兜底。"""
+    if sys.platform != "win32":
+        return []
+    try:
+        from .proc import run_external
+
+        completed = run_external(
+            ["route", "print", "-4"],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return _parse_windows_default_routes(completed.stdout) if completed.returncode == 0 else []
+
+
 def lan_ip() -> str:
-    """本机局域网 IP（UDP connect 技巧，不真正发包）。"""
+    """返回适合手机同局域网访问的本机 IPv4。
+
+    Windows 代理/TUN 软件可能把 UDP 默认路由指到 198.18/15；先从路由表
+    过滤这类地址并选下一条真实默认路由，再回退到 socket 探测/主机地址。
+    """
+    candidates = _windows_default_route_ips()
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("192.0.2.1", 80))
-            return s.getsockname()[0]
+            s.connect(("192.0.2.1", 80))  # 只选路由，不真正发包
+            candidates.append(s.getsockname()[0])
     except OSError:
-        return "127.0.0.1"
+        pass
+    try:
+        candidates.extend(
+            item[4][0]
+            for item in socket.getaddrinfo(
+                socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM
+            )
+        )
+    except OSError:
+        pass
+    return next((ip for ip in candidates if _usable_lan_ipv4(ip)), "127.0.0.1")
 
 
 def views_to_payload(views: list[ProviderView]) -> dict[str, Any]:
@@ -287,20 +366,13 @@ class WebServer:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 path = urlparse(self.path).path.rstrip("/")
-                if path in ("", "/t"):
-                    self._redirect(f"/t/{token}/")
-                elif path == f"/t/{token}":
+                if path == f"/t/{token}":
                     self._send(200, render_page(token).encode(), "text/html; charset=utf-8")
                 elif path == f"/t/{token}/api/quotas":
                     payload = json.dumps(views_to_payload(get_views()), ensure_ascii=False)
                     self._send(200, payload.encode(), "application/json; charset=utf-8")
                 else:
                     self._send(404, b"not found", "text/plain")  # 无 token 一律 404
-
-            def _redirect(self, location: str):
-                self.send_response(302)
-                self.send_header("Location", location)
-                self.end_headers()
 
             def _send(self, code: int, body: bytes, content_type: str):
                 self.send_response(code)

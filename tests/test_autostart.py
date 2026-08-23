@@ -35,6 +35,11 @@ class FakeWinreg:
         assert sub == autostart.RUN_KEY
         return FakeKey(self.store)
 
+    def CreateKeyEx(self, root, sub, reserved=0, access=0):
+        assert root == self.HKEY_CURRENT_USER
+        assert sub == autostart.RUN_KEY
+        return FakeKey(self.store)
+
     def QueryValueEx(self, key, name):
         if name not in key.store:
             raise FileNotFoundError(name)
@@ -85,6 +90,17 @@ class TestWinRegistry:
                             str(scripts / "python.exe"))
         assert "python.exe" in autostart.enable()
 
+    def test_frozen_exe_has_no_python_module_args(self, win32_env,
+                                                   monkeypatch, tmp_path):
+        exe = tmp_path / "CodexQuota.exe"
+        exe.touch()
+        monkeypatch.setattr(autostart.sys, "executable", str(exe))
+        monkeypatch.setattr(autostart.sys, "frozen", True, raising=False)
+
+        cmd = autostart.enable()
+        assert cmd == f'"{exe}"'
+        assert "-m codex_quota" not in cmd
+
     def test_disable_idempotent(self, win32_env):
         autostart.enable()
         autostart.disable()
@@ -92,4 +108,15 @@ class TestWinRegistry:
         autostart.disable()  # 再删一次不炸
 
     def test_is_enabled_default_false(self, win32_env):
+        assert autostart.is_enabled() is False
+
+    def test_stale_pythonw_value_is_not_enabled(self, win32_env,
+                                                 monkeypatch, tmp_path):
+        exe = tmp_path / "CodexQuota.exe"
+        exe.touch()
+        monkeypatch.setattr(autostart.sys, "executable", str(exe))
+        monkeypatch.setattr(autostart.sys, "frozen", True, raising=False)
+        win32_env.store[autostart.RUN_VALUE_NAME] = (
+            r'"C:\old-source\.venv\Scripts\pythonw.exe" -m codex_quota')
+
         assert autostart.is_enabled() is False

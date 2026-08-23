@@ -92,6 +92,10 @@ class Tunnel:
             text=True,
         )
         proc.record_child(self._proc.pid, "cloudflared")
+        assert self._proc.stderr is not None
+        # Windows 的 locale 常为 GBK，但 cloudflared 的结构化日志固定输出 UTF-8；
+        # 显式重配文本管道并容错异常字节，避免 pump 线程因解码错误退出。
+        self._proc.stderr.reconfigure(encoding="utf-8", errors="replace")
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
@@ -127,3 +131,5 @@ class Tunnel:
         self.public_url = None
         if proc_ is not None:
             proc.kill_tree(proc_, timeout=3)
+            if proc_.poll() is not None:
+                proc.forget_child(proc_.pid)

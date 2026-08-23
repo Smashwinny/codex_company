@@ -194,6 +194,8 @@ class KimiProvider:
         proc_, self._proc = self._proc, None
         if proc_ is not None:
             proc.kill_tree(proc_, timeout=2)
+            if proc_.poll() is not None:
+                proc.forget_child(proc_.pid)
 
     # ---------- 查询 ----------
 

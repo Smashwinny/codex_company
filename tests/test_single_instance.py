@@ -10,6 +10,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtCore import QCoreApplication
 
+import codex_quota.single_instance as single_instance
 from codex_quota.single_instance import SingleInstance
 
 
@@ -57,6 +58,48 @@ class TestSingleInstance:
         b = SingleInstance(_name())
         assert a.try_acquire() is True
         assert b.try_acquire() is True
+
+    def test_simultaneous_start_lock_loser_is_rejected(self, qcore, monkeypatch):
+        """原子锁输家即使暂时连不上赢家，也绝不能继续创建第二个 server。"""
+        sent = []
+
+        class FakeLock:
+            def __init__(self, _path):
+                pass
+
+            def tryLock(self, _timeout):
+                return False
+
+        class FakeSocket:
+            def connectToServer(self, _name):
+                pass
+
+            def waitForConnected(self, _timeout):
+                return True
+
+            def write(self, payload):
+                sent.append(payload)
+
+            def flush(self):
+                pass
+
+            def waitForBytesWritten(self, _timeout):
+                return True
+
+            def disconnectFromServer(self):
+                pass
+
+        class FakeServer:
+            def __init__(self, _parent):
+                raise AssertionError("锁输家不得创建 QLocalServer")
+
+        monkeypatch.setattr(single_instance, "QLockFile", FakeLock)
+        monkeypatch.setattr(single_instance, "QLocalSocket", FakeSocket)
+        monkeypatch.setattr(single_instance, "QLocalServer", FakeServer)
+
+        instance = SingleInstance(_name())
+        assert instance.try_acquire() is False
+        assert sent == [b"raise"]
 
     def test_stale_socket_recovered(self, qcore):
         """模拟首实例崩溃：不 delete server、直接丢弃引用，新实例应能接管。"""

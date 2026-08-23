@@ -77,6 +77,36 @@ class TestPidfile:
     def test_sweep_missing_file_returns_zero(self):
         assert proc.sweep_pidfile(kill=lambda pid: None) == 0
 
+    def test_record_replaces_tag_and_forget_removes_it(self):
+        import os
+
+        proc.record_child(111111, "cloudflared")
+        proc.record_child(222222, "cloudflared")
+        path = os.path.join(cache_dir(), "children.pid")
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        assert "111111 cloudflared" not in content
+        assert "222222 cloudflared" in content
+
+        proc.forget_child(222222)
+        assert not os.path.exists(path)
+
+    def test_windows_sweep_skips_reused_pid(self, monkeypatch):
+        import os
+
+        path = os.path.join(cache_dir(), "children.pid")
+        os.makedirs(cache_dir(), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("777 cloudflared original-creation\n")
+        killed = []
+        monkeypatch.setattr(proc, "IS_WINDOWS", True)
+        monkeypatch.setattr(proc, "_windows_process_identity",
+                            lambda _pid: "replacement-creation")
+        monkeypatch.setattr(proc, "_default_kill", killed.append)
+
+        assert proc.sweep_pidfile() == 0
+        assert killed == []
+
     def test_sweep_tolerates_bad_lines_and_dead_pids(self):
         import os
 
@@ -130,3 +160,4 @@ class TestWindowsBranches:
         cmd, kw = calls[0]
         assert cmd == ["taskkill", "/PID", "777", "/T", "/F"]
         assert kw.get("capture_output")  # 死 pid 退出码非 0，必须吞输出不 check
+        assert kw["creationflags"] & proc._CREATE_NO_WINDOW

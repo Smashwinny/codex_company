@@ -82,6 +82,10 @@ def _path(config_home: Optional[str]) -> str:
 def _win_exec_cmd() -> str:
     """自启命令：优先 pythonw（不弹控制台）；路径含空格必须带引号。"""
     exe = sys.executable
+    # PyInstaller/Nuitka 冻结包本身就是 GUI 入口，不再通过 Python 的
+    # ``-m codex_quota`` 启动。保留该参数会被应用当成未知 Qt 参数传入。
+    if getattr(sys, "frozen", False):
+        return f'"{exe}"'
     if exe.lower().endswith("python.exe"):
         candidate = exe[:-len("python.exe")] + "pythonw.exe"
         if os.path.isfile(candidate):
@@ -94,8 +98,14 @@ def _win_is_enabled() -> bool:
 
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
-            winreg.QueryValueEx(k, RUN_VALUE_NAME)
-        return True
+            value, _value_type = winreg.QueryValueEx(k, RUN_VALUE_NAME)
+        # 不能只看值名是否存在：从源码版升级到 EXE 或移动安装
+        # 目录后，旧 pythonw 路径依然存在但已无效。
+        def _normalise(command: str) -> str:
+            return " ".join(command.strip().replace("/", "\\").split()).casefold()
+
+        return isinstance(value, str) and (
+            _normalise(value) == _normalise(_win_exec_cmd()))
     except FileNotFoundError:
         return False
 
@@ -104,8 +114,10 @@ def _win_enable() -> str:
     import winreg
 
     cmd = _win_exec_cmd()
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
-                        winreg.KEY_SET_VALUE) as k:
+    # 精简/新建用户配置里 Run 键不一定预先存在；CreateKeyEx 对已有键也只是
+    # 打开，因此既覆盖正常情况，也避免首次勾选“开机自启”时 FileNotFoundError。
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0,
+                            winreg.KEY_SET_VALUE) as k:
         winreg.SetValueEx(k, RUN_VALUE_NAME, 0, winreg.REG_SZ, cmd)
     return cmd
 

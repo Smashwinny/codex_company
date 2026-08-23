@@ -1,4 +1,4 @@
-"""codex-quota: Linux 桌面端 Codex 额度监控。
+"""codex-quota: 跨平台多 provider 额度监控。
 
 默认启动悬浮窗（HUD）；`--cli` 进入 CLI 模式。
 """
@@ -6,6 +6,25 @@
 from __future__ import annotations
 
 import sys
+
+
+def _start_tunnel_guarded(tunnel, stopping, gate):
+    """与退出置位原子互斥：stopping 生效后不得再 spawn cloudflared。"""
+    with gate:
+        if stopping.is_set():
+            return None
+        return tunnel.start()
+
+
+def _quiesce_tunnel_restart(watchdog, stopping, gate, thread) -> None:
+    """关闭重连入口并等待在途 worker；调用者随后才能 stop tunnel/删 pidfile。"""
+    if watchdog is not None:
+        watchdog.stop()
+    if stopping is not None and gate is not None:
+        with gate:
+            stopping.set()
+    if thread is not None and thread.is_alive():
+        thread.join()
 
 
 def main() -> int:
@@ -113,6 +132,10 @@ def _run_hud(args: list[str]) -> int:
     # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）+ 可选公网隧道
     web_server = None
     tunnel = None
+    tunnel_watchdog = None
+    tunnel_restart_stop = None
+    tunnel_restart_gate = None
+    tunnel_restart_thread = None
     if settings.get("web_enabled"):
         from .web import WebServer, generate_token
 
@@ -219,17 +242,24 @@ def _run_hud(args: list[str]) -> int:
         _policy = RestartPolicy()
         _log = logging.getLogger("codex_quota")
         _restart_busy = threading.Event()
+        tunnel_restart_stop = threading.Event()
+        tunnel_restart_gate = threading.Lock()
 
         def _restart_tunnel():
             try:
+                if tunnel_restart_stop.is_set():
+                    return
                 _log.warning("cloudflared 已退出，尝试自动重连")
                 if not _policy.allow():
                     _log.warning("隧道重连过于频繁，进入冷却（10 分钟内最多 5 次）")
                     return
                 try:
-                    base = tunnel.start()
+                    base = _start_tunnel_guarded(
+                        tunnel, tunnel_restart_stop, tunnel_restart_gate)
                 except Exception as exc:
                     _log.warning("隧道重连失败: %s", exc)
+                    return
+                if base is None or tunnel_restart_stop.is_set():
                     return
                 hud.public_url = f"{base}/t/{token}/"
                 print(f"手机访问(公网): {hud.public_url}", file=sys.stderr)
@@ -242,17 +272,22 @@ def _run_hud(args: list[str]) -> int:
                 _restart_busy.clear()
 
         def _check_tunnel():
+            nonlocal tunnel_restart_thread
             # start() 会阻塞数秒，放后台线程避免卡 UI
-            if tunnel.is_alive() or _restart_busy.is_set():
+            if (tunnel_restart_stop.is_set() or tunnel.is_alive()
+                    or _restart_busy.is_set()):
                 return
             _restart_busy.set()
-            threading.Thread(target=_restart_tunnel, daemon=True).start()
+            tunnel_restart_thread = threading.Thread(
+                target=_restart_tunnel, daemon=True,
+                name="cloudflared-restart")
+            tunnel_restart_thread.start()
 
-        _tunnel_watchdog = QTimer()
-        _tunnel_watchdog.setInterval(30_000)
-        _tunnel_watchdog.timeout.connect(_check_tunnel)
-        _tunnel_watchdog.start()
-        hud._tunnel_watchdog = _tunnel_watchdog  # 防 GC
+        tunnel_watchdog = QTimer()
+        tunnel_watchdog.setInterval(30_000)
+        tunnel_watchdog.timeout.connect(_check_tunnel)
+        tunnel_watchdog.start()
+        hud._tunnel_watchdog = tunnel_watchdog  # 防 GC
 
     # 优雅退出：SIGTERM/SIGINT → 正常退出事件循环，finally 回收子进程
     # （kimi web / cloudflared 都在独立进程组，主进程被杀不会连带，必须主动清理）
@@ -275,6 +310,11 @@ def _run_hud(args: list[str]) -> int:
     try:
         return app.exec()
     finally:
+        # 先原子关闭重连入口，再等待已在途的 start() 完成；这样后面的 stop()
+        # 与 children.pid 删除之后，绝不会有后台线程重新 spawn cloudflared。
+        _quiesce_tunnel_restart(
+            tunnel_watchdog, tunnel_restart_stop,
+            tunnel_restart_gate, tunnel_restart_thread)
         if cmd_listener is not None:
             cmd_listener.stop()
         if tunnel is not None:

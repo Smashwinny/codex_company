@@ -1,3 +1,3 @@
-"""codex-quota: Linux 桌面端 Codex 额度实时显示。"""
+"""codex-quota: 跨平台多 provider 额度实时显示。"""
 
-__version__ = "0.1.0"
+__version__ = "0.2.1"

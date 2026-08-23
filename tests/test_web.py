@@ -7,8 +7,15 @@ import urllib.request
 
 import pytest
 
+from codex_quota import web
 from codex_quota.state import ProviderView, ViewState
-from codex_quota.web import WebServer, generate_token, lan_ip, views_to_payload
+from codex_quota.web import (
+    WebServer,
+    _parse_windows_default_routes,
+    generate_token,
+    lan_ip,
+    views_to_payload,
+)
 from tests.conftest import codex_snapshot
 
 
@@ -35,12 +42,12 @@ def get(url):
 
 
 class TestAuth:
-    def test_root_redirects(self, server):
-        req = urllib.request.Request(server.url.replace(f"/t/{server.token}/", "/"))
-        # urllib 默认跟随重定向，最终应落在带 token 的页面
-        with urllib.request.urlopen(req, timeout=5) as r:
-            assert r.status == 200
-            assert f"/t/{server.token}" in r.url
+    def test_root_does_not_reveal_token(self, server):
+        base = server.url.replace(f"/t/{server.token}/", "")
+        for path in ("/", "/t"):
+            code, body = get(base + path)
+            assert code == 404
+            assert server.token not in body
 
     def test_no_token_404(self, server):
         code, _ = get(f"http://127.0.0.1:{server.port}/api/quotas")
@@ -104,6 +111,39 @@ class TestHelpers:
         ip = lan_ip()
         parts = ip.split(".")
         assert len(parts) == 4
+
+    def test_windows_routes_skip_benchmark_adapter(self):
+        routes = """
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0       198.18.0.2       198.18.0.1      0
+          0.0.0.0          0.0.0.0     198.19.255.1     198.19.255.2      1
+          0.0.0.0          0.0.0.0      192.168.1.1      192.168.1.9     25
+      172.22.96.0    255.255.240.0         On-link       172.22.96.1   5256
+"""
+        assert _parse_windows_default_routes(routes) == ["192.168.1.9"]
+
+    def test_lan_ip_prefers_filtered_windows_route(self, monkeypatch):
+        monkeypatch.setattr(web, "_windows_default_route_ips",
+                            lambda: ["192.168.1.9"])
+
+        class BenchmarkSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                pass
+
+            def connect(self, _target):
+                pass
+
+            def getsockname(self):
+                return ("198.18.0.1", 12345)
+
+        monkeypatch.setattr(web.socket, "socket", lambda *_args: BenchmarkSocket())
+        monkeypatch.setattr(web.socket, "getaddrinfo", lambda *_args: [
+            (web.socket.AF_INET, web.socket.SOCK_DGRAM, 0, "", ("172.22.96.1", 0)),
+        ])
+        assert lan_ip() == "192.168.1.9"
 
     def test_url_format(self, server):
         assert server.url.startswith("http://")

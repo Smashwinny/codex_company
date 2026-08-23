@@ -75,6 +75,11 @@ class TestPlatformDefaults:
 class TestLinuxByteIdentical:
     """现有调用方切换后 Linux 路径逐字节不变（默认环境、无 XDG 变量）。"""
 
+    @pytest.fixture(autouse=True)
+    def _linux_platform(self, monkeypatch):
+        """在任意 CI 宿主上都显式模拟 Linux，避免断言宿主默认目录。"""
+        monkeypatch.setattr(sysdirs.sys, "platform", "linux")
+
     def test_settings_path_unchanged(self, _clean_env):
         from codex_quota.settings import default_settings_path
 

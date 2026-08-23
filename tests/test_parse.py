@@ -9,7 +9,9 @@ from __future__ import annotations
 import pytest
 import sys
 
+import codex_quota.app_server as app_server
 from codex_quota.app_server import (
+    AppServerClient,
     AppServerError,
     QuotaWindow,
     find_codex_bin,
@@ -53,6 +55,54 @@ REAL_RESPONSE = {
         },
     },
 }
+
+
+class TestWindowsAppServerSpawn:
+    def test_create_no_window_flag(self, monkeypatch):
+        captured = {}
+
+        class FakeProc:
+            stdout = ()
+
+            def poll(self):
+                return 0
+
+        def fake_popen(argv, **kwargs):
+            captured["argv"] = argv
+            captured["kwargs"] = kwargs
+            return FakeProc()
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.setattr(app_server.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(AppServerClient, "_send", staticmethod(lambda *_: None))
+        monkeypatch.setattr(
+            AppServerClient, "_await_response",
+            lambda *_args, **_kwargs: {
+                "result": {"rateLimits": {"limitId": "codex", "primary": {}}}
+            })
+
+        AppServerClient(codex_bin=r"C:\npm\codex.cmd").read_rate_limits()
+
+        flags = captured["kwargs"]["creationflags"]
+        assert flags & getattr(app_server.subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+    def test_reap_kills_cmd_process_tree(self, monkeypatch):
+        from codex_quota import proc as proc_utils
+
+        called = []
+
+        class FakeProc:
+            def poll(self):
+                return None
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.setattr(
+            proc_utils, "kill_tree",
+            lambda process, timeout=3: called.append((process, timeout)),
+        )
+        process = FakeProc()
+        AppServerClient._reap(process)
+        assert called == [(process, 1)]
 
 
 class TestParseRealResponse:

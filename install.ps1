@@ -1,4 +1,4 @@
-# codex-quota Windows 一键安装：
+﻿# codex-quota Windows 一键安装：
 #   1. 检查依赖（Python ≥ 3.10 / codex CLI / kimi CLI 可选）
 #   2. 创建 .venv 并安装 PyQt6
 #   3. 下载 cloudflared（vendor/bin/cloudflared.exe，手机公网访问隧道，可选）
@@ -9,6 +9,7 @@
 #   powershell -ExecutionPolicy Bypass -File install.ps1
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"  # Windows PowerShell 下载进度渲染很慢
 $ROOT = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ROOT
 
@@ -59,13 +60,27 @@ if (-not (Test-Path $venvPy)) {
     & $pyExe @pyArgs -m venv .venv
     if ($LASTEXITCODE -ne 0) { Write-Host "错误：venv 创建失败" -ForegroundColor Red; exit 1 }
 }
-& $venvPy -c "import PyQt6" 2>$null
+& $venvPy -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PyQt6') else 1)"
 if ($LASTEXITCODE -ne 0) {
     & $venvPy -m pip install -q PyQt6
     if ($LASTEXITCODE -ne 0) { Write-Host "错误：PyQt6 安装失败" -ForegroundColor Red; exit 1 }
 }
 $qtVer = & $venvPy -c "import PyQt6.QtCore as c; print(c.QT_VERSION_STR)"
 ok "PyQt6 $qtVer"
+
+# 把项目装进 venv，确保注册表 Run 从任意工作目录执行
+# `pythonw.exe -m codex_quota` 都能找到模块（editable 便于原地更新代码）。
+& $venvPy -m pip install -q -e $ROOT
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "错误：codex-quota 安装进 venv 失败" -ForegroundColor Red
+    exit 1
+}
+$pkgPath = & $venvPy -I -c "import codex_quota; print(codex_quota.__file__)"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "错误：codex-quota 跨工作目录导入验证失败" -ForegroundColor Red
+    exit 1
+}
+ok "codex-quota editable install（$pkgPath）"
 
 Write-Host "==> [3/4] cloudflared（手机公网访问隧道，可选但推荐）"
 $cfBin = "$ROOT\vendor\bin\cloudflared.exe"

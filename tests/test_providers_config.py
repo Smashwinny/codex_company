@@ -48,7 +48,8 @@ class TestParsing:
             "[providers.deepseek]\n"
             'type = "deepseek"\n'
             "interval = 300\n"
-            'api_key = "$DS_KEY"\n'
+            'api_key = "$DS_KEY"\n',
+            encoding="utf-8",
         )
         cfg = load_providers_config(str(path))
         assert cfg["kimi"]["enabled"] is False

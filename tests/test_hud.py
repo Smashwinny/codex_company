@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytest.importorskip("PyQt6")
@@ -196,6 +198,7 @@ class TestInteractions:
 
         store = StateStore(cache_path=default_cache_path("codex"))
         used_snap = snap()
+        used_snap.fetched_at = time.time()  # 保持在产品允许加载的 24h 缓存窗口内
         used_snap.primary_limit.primary.used_percent = 91
         store.on_success(used_snap)
 
