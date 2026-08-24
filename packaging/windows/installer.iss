@@ -96,7 +96,7 @@ begin
   { 覆盖安装前强制结束运行中的实例及其整棵进程树。CloseApplications 对本应用
     无效：它发 WM_CLOSE，而托盘形态下关窗只是隐藏、cloudflared/kimi-code
     是无窗口控制台进程——页面会无限重试卡死（同事实测）。所以自己杀：
-    /T 带走子进程（cloudflared 等在 {app} 下占用文件），再按镜像名补杀
+    /T 带走子进程（cloudflared 等在安装目录下占用文件），再按镜像名补杀
     可能已孤儿化的子进程。}
   Exec('taskkill.exe', '/F /T /IM {#AppExeName}', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
