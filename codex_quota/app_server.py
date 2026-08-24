@@ -171,8 +171,7 @@ def find_codex_bin() -> str:
     import glob
 
     if is_win:
-        candidates = [os.path.join(os.environ.get("APPDATA") or "", "npm",
-                                   "codex.cmd")]
+        candidates = _windows_codex_candidates()
     else:
         candidates = sorted(
             glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions",
@@ -186,6 +185,51 @@ def find_codex_bin() -> str:
         "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
         "或设置 CODEX_BIN 环境变量。"
     )
+
+
+_NPM_PREFIX_UNSET = object()
+_npm_prefix_cache: object = _NPM_PREFIX_UNSET
+
+
+def _npm_prefix() -> Optional[str]:
+    """npm 全局 prefix（可被 npm config 自定义，默认 %APPDATA%\\npm）。
+
+    只在 PATH 找不到 codex 的兜底路径上调用一次并缓存；查询失败返回 None。
+    """
+    global _npm_prefix_cache
+    if _npm_prefix_cache is not _NPM_PREFIX_UNSET:
+        return _npm_prefix_cache or None  # type: ignore[return-value]
+    prefix = ""
+    npm = shutil.which("npm")
+    if npm:
+        try:
+            from .proc import hidden_console_kwargs, run_external, wrap_cmd_shim
+
+            out = run_external(wrap_cmd_shim([npm, "config", "get", "prefix"]),
+                               capture_output=True, text=True, timeout=10,
+                               **hidden_console_kwargs())
+            if out.returncode == 0:
+                prefix = (out.stdout or "").strip()
+        except Exception:
+            prefix = ""
+    _npm_prefix_cache = prefix
+    return prefix or None
+
+
+def _windows_codex_candidates() -> list[str]:
+    """Windows 下 codex 的常见安装位置（PATH 之外的兜底，按可能性排序）。"""
+    appdata = os.environ.get("APPDATA") or ""
+    local = os.environ.get("LOCALAPPDATA") or ""
+    candidates = []
+    prefix = _npm_prefix()  # npm 自定义 prefix（与默认不同才值得查）
+    if prefix:
+        candidates.append(os.path.join(prefix, "codex.cmd"))
+    candidates += [
+        os.path.join(appdata, "npm", "codex.cmd"),              # npm 全局默认
+        os.path.join(local, "Programs", "codex", "codex.exe"),  # 独立安装包形态
+        os.path.join(os.path.expanduser("~"), ".codex", "bin", "codex.exe"),
+    ]
+    return candidates
 
 
 def codex_home() -> str:
@@ -314,14 +358,10 @@ class AppServerClient:
         self.timeout = timeout
 
     def read_rate_limits(self) -> QuotaSnapshot:
-        from .proc import popen_external, wrap_cmd_shim
+        from .proc import hidden_console_kwargs, popen_external, wrap_cmd_shim
 
-        popen_kwargs: dict[str, Any] = {}
-        if sys.platform == "win32":
-            # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
-            # 不显式禁止窗口就可能在每次额度刷新时闪出黑框。
-            popen_kwargs["creationflags"] = getattr(
-                subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
+        # 不显式禁止窗口就可能在每次额度刷新时闪出黑框
         proc = popen_external(
             wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
             stdin=subprocess.PIPE,
@@ -329,7 +369,7 @@ class AppServerClient:
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
-            **popen_kwargs,
+            **hidden_console_kwargs(),
         )
         lines: queue.Queue[str] = queue.Queue()
 

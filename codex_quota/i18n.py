@@ -149,6 +149,8 @@ _EN: dict[str, str] = {
     "未登录": "Not logged in",
     "Codex 登录": "Codex login",
     "未安装（可选，仅不显示 Kimi 分区）": "Not installed (optional, Kimi section hidden)",
+    "未找到（已装过就设 CODEX_BIN 指向 codex.cmd 的完整路径）":
+        "Not found (if installed, set CODEX_BIN to the full path of codex.cmd)",
     "未安装（可选，手机仅局域网可看；运行 install.sh 下载）":
         "Not installed (optional, phone view limited to LAN; run install.sh)",
     "退出": "Quit",

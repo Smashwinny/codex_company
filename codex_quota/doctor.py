@@ -6,7 +6,6 @@ Qt 无关——首启向导（ui/wizard.py）和未来的 --doctor 命令共用�
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -31,15 +30,13 @@ class CheckItem:
 def _default_version(bin_path: str) -> Optional[str]:
     """执行 <bin> --version 取首行输出；失败返回 None。"""
     try:
-        from .proc import run_external, wrap_cmd_shim
+        from .proc import hidden_console_kwargs, run_external, wrap_cmd_shim
 
-        kwargs = {"capture_output": True, "text": True, "timeout": 5}
-        if sys.platform == "win32":
-            # 首启向导会在 GUI 进程里执行 codex.cmd --version；
-            # 显式禁用控制台窗口，避免 cmd.exe 短暂黑窗闪现。
-            kwargs["creationflags"] = getattr(
-                subprocess, "CREATE_NO_WINDOW", 0x08000000)
-        out = run_external(wrap_cmd_shim([bin_path, "--version"]), **kwargs)
+        # 首启向导会在 GUI 进程里执行 codex.cmd --version；
+        # 显式禁用控制台窗口，避免 cmd.exe 短暂黑窗闪现
+        out = run_external(wrap_cmd_shim([bin_path, "--version"]),
+                           capture_output=True, text=True, timeout=5,
+                           **hidden_console_kwargs())
         lines = (out.stdout or out.stderr).strip().splitlines()
         return lines[0].strip() if lines else None
     except Exception:
@@ -67,9 +64,17 @@ def run_checks(version_of: Callable[[str], Optional[str]] = _default_version
             items.append(CheckItem("codex_login", tr("Codex 登录"), True, FAIL,
                                    tr("未登录"), "codex login"))
     except CodexNotFoundError:
-        items.append(CheckItem("codex_bin", "Codex CLI", True, FAIL,
-                               tr("未安装"),
-                               "npm i -g @openai/codex && codex login"))
+        # Windows 上 npm 全局目录可能不在 PATH（或独立安装包装到非常规位置），
+        # 给出环境变量兜底指引；Linux/mac 保持安装指引
+        if sys.platform == "win32":
+            items.append(CheckItem(
+                "codex_bin", "Codex CLI", True, FAIL,
+                tr("未找到（已装过就设 CODEX_BIN 指向 codex.cmd 的完整路径）"),
+                "npm i -g @openai/codex && codex login"))
+        else:
+            items.append(CheckItem("codex_bin", "Codex CLI", True, FAIL,
+                                   tr("未安装"),
+                                   "npm i -g @openai/codex && codex login"))
 
     # --- Kimi CLI（可选） ---
     if find_kimi_bin():

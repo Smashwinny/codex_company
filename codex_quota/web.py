@@ -81,14 +81,17 @@ def _windows_default_route_ips() -> list[str]:
     if sys.platform != "win32":
         return []
     try:
-        from .proc import run_external
+        from .proc import hidden_console_kwargs, run_external
 
+        # errors="replace"：Windows 开"Beta: UTF-8 全球语言支持"时 route.exe 仍
+        # 输出 OEM 代码页（GBK），硬解码会抛 UnicodeDecodeError 一路炸进 Qt 槽
         completed = run_external(
             ["route", "print", "-4"],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=3,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            **hidden_console_kwargs(),
         )
     except (OSError, subprocess.SubprocessError):
         return []

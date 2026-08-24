@@ -234,3 +234,80 @@ class TestFindCodexBin:
         monkeypatch.setattr("os.path.expanduser", lambda p: str(tmp_path) + p[1:])
         with pytest.raises(CodexNotFoundError):
             find_codex_bin()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="在 POSIX 上模拟 win32 分支逻辑")
+class TestWindowsCodexDiscovery:
+    """Windows 下 codex 安装位置兜底：npm 自定义 prefix / 默认 npm 目录 / 独立安装包。"""
+
+    @pytest.fixture(autouse=True)
+    def _win_env(self, monkeypatch, tmp_path):
+        from codex_quota import app_server
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr(app_server.shutil, "which", lambda _name: None)
+        monkeypatch.setattr(app_server, "_npm_prefix_cache",
+                            app_server._NPM_PREFIX_UNSET)
+        return tmp_path
+
+    def test_appdata_npm_default(self, monkeypatch, tmp_path):
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setenv("APPDATA", str(tmp_path))
+        npm_dir = tmp_path / "npm"
+        npm_dir.mkdir()
+        (npm_dir / "codex.cmd").write_text("@echo off\n")
+        assert find_codex_bin() == str(npm_dir / "codex.cmd")
+
+    def test_npm_custom_prefix(self, monkeypatch, tmp_path):
+        import subprocess as sp
+
+        from codex_quota import app_server, proc
+        from codex_quota.app_server import find_codex_bin
+
+        prefix = tmp_path / "custom-prefix"
+        prefix.mkdir()
+        (prefix / "codex.cmd").write_text("@echo off\n")
+        calls = []
+
+        def fake_run_external(argv, **kw):
+            calls.append(argv)
+            return sp.CompletedProcess(argv, 0, stdout=str(prefix) + "\n")
+
+        # npm 在 PATH（供 prefix 查询），codex 不在
+        monkeypatch.setattr(app_server.shutil, "which",
+                            lambda name: "/usr/bin/npm" if name == "npm" else None)
+        monkeypatch.setattr(proc, "run_external", fake_run_external)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "empty"))
+        assert find_codex_bin() == str(prefix / "codex.cmd")
+        # prefix 查询结果被缓存，第二次兜底不再跑 npm
+        assert len(calls) == 1
+        find_codex_bin()
+        assert len(calls) == 1
+
+    def test_programs_codex_exe(self, monkeypatch, tmp_path):
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setenv("APPDATA", str(tmp_path / "empty-roam"))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        exe = tmp_path / "Programs" / "codex" / "codex.exe"
+        exe.parent.mkdir(parents=True)
+        exe.write_text("MZ")
+        assert find_codex_bin() == str(exe)
+
+    def test_npm_query_failure_tolerated(self, monkeypatch, tmp_path):
+        from codex_quota import app_server, proc
+        from codex_quota.app_server import CodexNotFoundError, find_codex_bin
+
+        monkeypatch.setattr(app_server.shutil, "which",
+                            lambda name: "/usr/bin/npm" if name == "npm" else None)
+
+        def boom(*_a, **_kw):
+            raise OSError("npm 起不来")
+
+        monkeypatch.setattr(proc, "run_external", boom)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "empty"))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty2"))
+        with pytest.raises(CodexNotFoundError):
+            find_codex_bin()

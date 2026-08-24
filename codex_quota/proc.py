@@ -80,6 +80,16 @@ def popen_external(argv: list[str], **kwargs) -> subprocess.Popen:
         return subprocess.Popen(argv, **kwargs)
 
 
+def hidden_console_kwargs() -> dict:
+    """Windows GUI 进程 spawn 外部命令时抑制控制台黑框的 kwargs（POSIX 为空）。
+
+    统一出口——调用方不要再各自内联 getattr(subprocess, "CREATE_NO_WINDOW", ...)
+    （曾出现三处复制且兜底值漂移）。传进 Popen/subprocess.run 即可。
+    动态读 sys.platform（不用模块常量），便于测试 monkeypatch 平台。
+    """
+    return {"creationflags": _CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+
+
 def run_external(argv: list[str], **kwargs) -> subprocess.CompletedProcess:
     """``subprocess.run`` 的冻结安全版本。"""
     with external_dll_search_path():
