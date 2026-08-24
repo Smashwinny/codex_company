@@ -50,7 +50,10 @@ UninstallDisplayName={#AppName}
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
+; CloseApplications 对本应用无效且有害：它发 WM_CLOSE（关窗即隐藏、进程不退），
+; 对 cloudflared/kimi-code 这类无窗口子进程则无限重试卡死页面。
+; 实例终止由 [Code] InitializeSetup 的 taskkill 负责，这里必须关掉。
+CloseApplications=no
 RestartApplications=no
 UsePreviousAppDir=yes
 UsePreviousTasks=yes
@@ -90,15 +93,22 @@ var
   PidFile: String;
   AppPid: AnsiString;  { LoadStringFromFile 的第二参数类型必须是 AnsiString }
 begin
-  { 覆盖安装前强制结束运行中的实例。CloseApplications 对本应用无效：
-    它发 WM_CLOSE，而托盘形态下关窗只是隐藏，进程不退，文件一直被占用。 }
-  Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE,
+  { 覆盖安装前强制结束运行中的实例及其整棵进程树。CloseApplications 对本应用
+    无效：它发 WM_CLOSE，而托盘形态下关窗只是隐藏、cloudflared/kimi-code
+    是无窗口控制台进程——页面会无限重试卡死（同事实测）。所以自己杀：
+    /T 带走子进程（cloudflared 等在安装目录下占用文件），再按镜像名补杀
+    可能已孤儿化的子进程。}
+  Exec('taskkill.exe', '/F /T /IM {#AppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM cloudflared.exe', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM kimi-code.exe', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
   { 源码安装形态（pythonw -m codex_quota）：按 app.pid 精确结束，
     避免误杀其他 pythonw 进程 }
   PidFile := ExpandConstant('{localappdata}') + '\codex-quota\app.pid';
   if FileExists(PidFile) and LoadStringFromFile(PidFile, AppPid) then
-    Exec('taskkill.exe', '/F /PID ' + Trim(AppPid), '', SW_HIDE,
+    Exec('taskkill.exe', '/F /T /PID ' + Trim(AppPid), '', SW_HIDE,
          ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
@@ -148,8 +158,12 @@ function InitializeUninstall: Boolean;
 var
   ResultCode: Integer;
 begin
-  { 卸载前同样先结束运行中的实例，否则文件占用导致卸载残留 }
-  Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE,
+  { 卸载前同样先结束运行中的实例（含进程树），否则文件占用导致卸载残留 }
+  Exec('taskkill.exe', '/F /T /IM {#AppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM cloudflared.exe', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/F /IM kimi-code.exe', '', SW_HIDE,
        ewWaitUntilTerminated, ResultCode);
   Result := True;
 end;
