@@ -62,6 +62,7 @@ Name: "chinesesimp"; MessagesFile: "{#ChineseLanguageFile}"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
+Name: "desktopicon"; Description: "在桌面创建快捷方式"; GroupDescription: "附加选项："
 Name: "autostart"; Description: "登录 Windows 时自动启动 {#AppName}"; GroupDescription: "附加选项："; Flags: unchecked
 
 [Files]
@@ -69,6 +70,7 @@ Source: "{#PyInstallerDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
+Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\卸载 {#AppName}"; Filename: "{uninstallexe}"
 
 [Registry]
@@ -81,6 +83,24 @@ Filename: "{app}\{#AppExeName}"; Description: "启动 {#AppName}"; WorkingDir: "
 var
   HadExistingAutostart: Boolean;
   MigrationSelectionApplied: Boolean;
+
+function InitializeSetup: Boolean;
+var
+  ResultCode: Integer;
+  PidFile, AppPid: String;
+begin
+  { 覆盖安装前强制结束运行中的实例。CloseApplications 对本应用无效：
+    它发 WM_CLOSE，而托盘形态下关窗只是隐藏，进程不退，文件一直被占用。 }
+  Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  { 源码安装形态（pythonw -m codex_quota）：按 app.pid 精确结束，
+    避免误杀其他 pythonw 进程 }
+  PidFile := ExpandConstant('{localappdata}') + '\codex-quota\app.pid';
+  if FileExists(PidFile) and LoadStringFromFile(PidFile, AppPid) then
+    Exec('taskkill.exe', '/F /PID ' + Trim(AppPid), '', SW_HIDE,
+         ewWaitUntilTerminated, ResultCode);
+  Result := True;
+end;
 
 procedure InitializeWizard;
 var
@@ -121,6 +141,16 @@ begin
     else
       RegDeleteValue(HKCU, '{#RunKey}', 'codex-quota');
   end;
+end;
+
+function InitializeUninstall: Boolean;
+var
+  ResultCode: Integer;
+begin
+  { 卸载前同样先结束运行中的实例，否则文件占用导致卸载残留 }
+  Exec('taskkill.exe', '/F /IM {#AppExeName}', '', SW_HIDE,
+       ewWaitUntilTerminated, ResultCode);
+  Result := True;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
