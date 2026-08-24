@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -16,18 +17,44 @@ def _start_tunnel_guarded(tunnel, stopping, gate):
         return tunnel.start()
 
 
-def _quiesce_tunnel_restart(watchdog, stopping, gate, thread) -> None:
-    """关闭重连入口并等待在途 worker；调用者随后才能 stop tunnel/删 pidfile。"""
+def _quiesce_tunnel_restart(watchdog, stopping, gate, thread,
+                            join_timeout: float = 12.0) -> None:
+    """关闭重连入口并有界等待在途 worker；调用者随后才能 stop tunnel/删 pidfile。
+
+    stopping 先无锁置位（Event.set 原子，立即阻断新的重连——gate 只在
+    worker 侧保证"检查+spawn"的原子性，置信号方不需要它）。join 必须有界：
+    在途 tunnel.start() 最长 startup_timeout(30s)+kill_tree(3s)，无界 join
+    会把退出挂住 33s，用户强杀反而绕过 finally 清理。超时放行后若 worker
+    后来仍 spawn 了 cloudflared，由 children.pid 在下次启动时兜底回收。
+    """
+    import logging
+
     if watchdog is not None:
         watchdog.stop()
-    if stopping is not None and gate is not None:
-        with gate:
-            stopping.set()
+    if stopping is not None:
+        stopping.set()
     if thread is not None and thread.is_alive():
-        thread.join()
+        thread.join(timeout=join_timeout)
+        if thread.is_alive():
+            logging.getLogger("codex_quota").warning(
+                "隧道重连线程 %ss 内未结束，退出清理继续（残留由 pidfile 兜底）",
+                join_timeout)
+
+
+def _ensure_console_streams() -> None:
+    """pythonw.exe / 冻结 windowed 下 sys.stdout/sys.stderr 都是 None——不先
+    接到日志文件，任何 print(..., file=sys.stderr)/logging（含 --cli 的
+    argparse --help）都 AttributeError，且无控制台无日志，静默崩溃。"""
+    if sys.stderr is None:
+        from .sysdirs import cache_dir, log_path
+
+        os.makedirs(cache_dir(), exist_ok=True)
+        sys.stdout = sys.stderr = open(log_path(), "a", encoding="utf-8",
+                                       buffering=1)
 
 
 def main() -> int:
+    _ensure_console_streams()  # 必须在 --cli 分支之前：argparse 也写 stdout
     args = sys.argv[1:]
     if "--cli" in args:
         args.remove("--cli")
@@ -38,17 +65,6 @@ def main() -> int:
 
 
 def _run_hud(args: list[str]) -> int:
-    # Windows pythonw.exe 下 sys.stdout/sys.stderr 都是 None——不先接到日志文件，
-    # 任何 print(..., file=sys.stderr)/logging 都 AttributeError，且无控制台无
-    # 日志，表现为"静默起不来"。这是 Windows 兼容里最高优先的一处。
-    import os
-
-    if sys.stderr is None:
-        from .sysdirs import cache_dir, log_path
-
-        os.makedirs(cache_dir(), exist_ok=True)
-        sys.stdout = sys.stderr = open(log_path(), "a", encoding="utf-8",
-                                       buffering=1)
     try:
         from PyQt6.QtWidgets import QApplication, QSystemTrayIcon
     except ImportError:
@@ -278,10 +294,15 @@ def _run_hud(args: list[str]) -> int:
                     or _restart_busy.is_set()):
                 return
             _restart_busy.set()
-            tunnel_restart_thread = threading.Thread(
-                target=_restart_tunnel, daemon=True,
-                name="cloudflared-restart")
-            tunnel_restart_thread.start()
+            try:
+                tunnel_restart_thread = threading.Thread(
+                    target=_restart_tunnel, daemon=True,
+                    name="cloudflared-restart")
+                tunnel_restart_thread.start()
+            except Exception as exc:
+                # 线程起不来时 busy 必须释放——否则看门狗永久失效
+                _restart_busy.clear()
+                _log.warning("隧道重连线程启动失败: %s", exc)
 
         tunnel_watchdog = QTimer()
         tunnel_watchdog.setInterval(30_000)

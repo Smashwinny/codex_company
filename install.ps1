@@ -60,12 +60,17 @@ if (-not (Test-Path $venvPy)) {
     & $pyExe @pyArgs -m venv .venv
     if ($LASTEXITCODE -ne 0) { Write-Host "错误：venv 创建失败" -ForegroundColor Red; exit 1 }
 }
-& $venvPy -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('PyQt6') else 1)"
+# 真 import 探测（find_spec 只查文件存在，DLL 损坏/缺 VC++ 运行库会漏判）
+& $venvPy -c "import PyQt6" 2>$null
 if ($LASTEXITCODE -ne 0) {
     & $venvPy -m pip install -q PyQt6
     if ($LASTEXITCODE -ne 0) { Write-Host "错误：PyQt6 安装失败" -ForegroundColor Red; exit 1 }
 }
 $qtVer = & $venvPy -c "import PyQt6.QtCore as c; print(c.QT_VERSION_STR)"
+if ($LASTEXITCODE -ne 0 -or -not $qtVer) {
+    Write-Host "错误：PyQt6 已安装但无法导入——通常缺 Visual C++ 运行库（安装微软官方 vc_redist.x64.exe 后重跑）" -ForegroundColor Red
+    exit 1
+}
 ok "PyQt6 $qtVer"
 
 # 把项目装进 venv，确保注册表 Run 从任意工作目录执行

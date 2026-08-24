@@ -53,7 +53,8 @@ class TestRestartShutdownGuard:
         assert _start_tunnel_guarded(
             FakeTunnel(), stopping, threading.Lock()) is None
 
-    def test_shutdown_waits_for_inflight_start_before_setting_stop(self):
+    def test_shutdown_sets_stop_immediately_and_waits_for_worker(self):
+        """新契约：stopping 立即无锁置位（不等 gate），在途 worker 由有界 join 等待。"""
         import threading
 
         entered = threading.Event()
@@ -76,7 +77,7 @@ class TestRestartShutdownGuard:
         shutdown = threading.Thread(target=lambda: _quiesce_tunnel_restart(
             None, stopping, gate, worker))
         shutdown.start()
-        assert not stopping.wait(0.05)  # start() 在途时退出置位须等待同一门锁
+        assert stopping.wait(0.5)  # 立即置位，不等 start() 结束
         release.set()
         worker.join(2)
         shutdown.join(2)
@@ -84,6 +85,26 @@ class TestRestartShutdownGuard:
         assert result == ["https://example.trycloudflare.com"]
         assert stopping.is_set()
         assert not worker.is_alive()
+
+    def test_shutdown_join_is_bounded_when_worker_stuck(self):
+        """worker 卡死时 quiesce 在 join_timeout 内返回，不挂住退出路径。"""
+        import threading
+        import time
+
+        never = threading.Event()
+        stopping = threading.Event()
+
+        worker = threading.Thread(target=lambda: never.wait(30), daemon=True)
+        worker.start()
+
+        t0 = time.monotonic()
+        _quiesce_tunnel_restart(None, stopping, threading.Lock(), worker,
+                                join_timeout=0.2)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 5  # 有界返回（允许调度抖动，远小于无界的 30s）
+        assert stopping.is_set()
+        never.set()  # 放行 worker 收尾
+        worker.join(2)
 
 
 class TestTunnelTextDecoding:

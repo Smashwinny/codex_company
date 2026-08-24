@@ -24,12 +24,6 @@ from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
 
 
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def snap():
     return codex_snapshot()
 

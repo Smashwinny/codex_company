@@ -217,7 +217,11 @@ def _write_pidfile(lines: list[str]) -> None:
 
 
 def record_child(pid: int, tag: str) -> None:
-    """spawn 成功后立即记录（要在任何阻塞等待输出之前，防崩溃漏记）。"""
+    """spawn 成功后立即记录（要在任何阻塞等待输出之前，防崩溃漏记）。
+
+    按 PID 去重而非按 tag 替换：kill 未生效的幸存进程必须留在名单里——
+    按 tag 替换会把它们从 pidfile 轨永久脱管（下次同 tag spawn 覆盖记录）。
+    """
     try:
         identity = _windows_process_identity(pid)
         entry = f"{pid} {tag}" + (f" {identity}" if identity else "")
@@ -227,10 +231,10 @@ def record_child(pid: int, tag: str) -> None:
                     lines = f.read().splitlines()
             except OSError:
                 lines = []
-            # A tag denotes one managed service. Reconnects replace its prior
-            # record instead of accumulating dead PIDs indefinitely.
+            # 同 PID 才替换（同一 spawn 重复记录）；同 tag 不同 PID 都保留，
+            # sweep 时逐个按身份校验后回收
             lines = [line for line in lines
-                     if len(line.split()) < 2 or line.split()[1] != tag]
+                     if not line.split() or line.split()[0] != str(pid)]
             lines.append(entry)
             _write_pidfile(lines)
     except OSError:
@@ -263,12 +267,51 @@ def _default_kill(pid: int) -> None:
     os.killpg(pid, signal.SIGTERM)
 
 
+_TAG_KEYWORDS = {"cloudflared": "cloudflared", "kimi-web": "kimi"}
+_TAG_IMAGES = {"cloudflared": "cloudflared.exe", "kimi-web": "kimi-code.exe"}
+
+
+def _pid_matches_tag_posix(pid: int, tag: str) -> bool:
+    """POSIX 身份校验：/proc cmdline 含 tag 关键词才认；进程已死返回 False。
+
+    防 PID 复用误杀——sweep 的 killpg 直接打进程组，没有这层校验，
+    死 PID 被 OS 复用给无关进程组组长时会误伤。
+    """
+    keyword = _TAG_KEYWORDS.get(tag, tag)
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return keyword.encode() in f.read()
+    except OSError:
+        return False
+
+
+def _pid_matches_tag_windows(pid: int, tag: str) -> bool:
+    """Windows 身份校验：tasklist 查镜像名与 tag 期望一致（用于无指纹的
+    两字段遗留记录——直接跳过会让升级前遗留的真实孤儿永久脱管）。"""
+    expected = _TAG_IMAGES.get(tag)
+    if expected is None:
+        return False
+    try:
+        out = run_external(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, errors="replace",
+            creationflags=_CREATE_NO_WINDOW, timeout=10)
+    except Exception:
+        return False
+    if out.returncode != 0 or not out.stdout:
+        return False
+    image = out.stdout.strip().split(",")[0].strip('"')
+    return image.lower() == expected.lower()
+
+
 def sweep_pidfile(*, kill: Optional[Callable[[int], None]] = None) -> int:
     """按 children.pid 回收上轮遗留子进程，返回清理数。kill 可注入（测试）。
 
     先删文件再逐个杀：杀到一半崩溃也不会留下重复条目（重复杀死 pid 无害）。
+    身份校验（仅真实 kill 时）：POSIX 对每条记录查 /proc cmdline 关键词；
+    Windows 对三字段记录比对创建时间指纹，两字段遗留记录用 tasklist 镜像名核对。
     """
-    validate_identity = kill is None and IS_WINDOWS
+    validate = kill is None
     kill = kill or _default_kill
     with _PIDFILE_LOCK:
         try:
@@ -285,16 +328,19 @@ def sweep_pidfile(*, kill: Optional[Callable[[int], None]] = None) -> int:
         parts = line.split()
         if not parts or not parts[0].isdigit():
             continue
-        if validate_identity:
-            # Legacy two-field records cannot safely identify a Windows
-            # process. Skip them rather than risk killing a reused unrelated
-            # PID. New records always carry the creation-time fingerprint.
-            if len(parts) < 3:
-                continue
-            if _windows_process_identity(int(parts[0])) != parts[2]:
+        pid = int(parts[0])
+        tag = parts[1] if len(parts) > 1 else ""
+        if validate:
+            if IS_WINDOWS:
+                if len(parts) >= 3:
+                    if _windows_process_identity(pid) != parts[2]:
+                        continue
+                elif not _pid_matches_tag_windows(pid, tag):
+                    continue  # 镜像名不符 = PID 已被复用，不能杀
+            elif not _pid_matches_tag_posix(pid, tag):
                 continue
         try:
-            kill(int(parts[0]))
+            kill(pid)
             killed += 1
         except Exception:
             pass  # 死 pid / PID 复用到无关进程时 taskkill 失败，均无无害

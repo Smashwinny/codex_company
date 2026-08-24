@@ -33,6 +33,22 @@ class FakeProvider:
         self.closed = True
 
 
+@pytest.fixture(scope="session")
+def qapp():
+    """session 级唯一 QApplication。
+
+    必须统一走这里：Qt 应用对象是单例，若别处先建了 QCoreApplication
+    （非 GUI 子类），`QApplication.instance() or QApplication([])` 会拿到
+    错误类型，一碰 QPixmap 直接 SIGABRT（实测 pytest 跨文件组合时复现）。
+    """
+    from PyQt6.QtWidgets import QApplication
+
+    inst = QApplication.instance()
+    assert inst is None or isinstance(inst, QApplication), \
+        f"已有非 GUI application 实例: {type(inst).__name__}（Qt 测试统一用 conftest.qapp）"
+    return inst or QApplication([])
+
+
 def codex_snapshot():
     """带 provider 字段的 codex 快照（基于真实响应 fixture）。"""
     from codex_quota.app_server import parse_rate_limits_response

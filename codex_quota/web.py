@@ -27,6 +27,7 @@ DEFAULT_PORT = 8642
 MAX_PORT_ATTEMPTS = 20
 
 _BENCHMARK_NET = ipaddress.ip_network("198.18.0.0/15")
+_CGNAT_NET = ipaddress.ip_network("100.64.0.0/10")
 _RFC1918_NETS = (
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -45,7 +46,9 @@ def _usable_lan_ipv4(value: str) -> bool:
     """是否可作为手机访问地址。
 
     198.18.0.0/15 常被代理/TUN 软件用作虚拟默认路由；它和 loopback、
-    link-local、CGNAT 等地址都不应出现在发给手机的 LAN URL 里。
+    link-local 等地址都不应出现在发给手机的 LAN URL 里。
+    100.64.0.0/10（CGNAT）放行：Tailscale 等 overlay 网络里手机与电脑
+    正是通过这个段互访，过滤掉会让 URL 退化成 127.0.0.1。
     """
     try:
         ip = ipaddress.ip_address(value)
@@ -55,6 +58,8 @@ def _usable_lan_ipv4(value: str) -> bool:
         return False
     if ip.is_unspecified or ip.is_loopback or ip.is_link_local or ip.is_multicast:
         return False
+    if ip in _CGNAT_NET:
+        return True
     # 手机同网段通常是 RFC1918；也允许真实公网 IPv4 直连的少数网络。
     return any(ip in network for network in _RFC1918_NETS) or ip.is_global
 

@@ -16,12 +16,6 @@ from codex_quota.ui.wizard import SetupWizardDialog, should_show_wizard
 from tests.test_doctor import patch_finders
 
 
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 @pytest.fixture
 def settings(tmp_path):
     return Settings(path=str(tmp_path / "settings.json"))

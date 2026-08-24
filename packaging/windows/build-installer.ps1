@@ -128,6 +128,48 @@ $numericVersion = '{0}.{1}.{2}.0' -f @(
     $numericMatch.Groups['patch'].Value
 )
 
+# 由 pyproject 版本现生成 version_info.txt——不维护静态副本，
+# 否则 EXE 属性页版本与安装包版本必然漂移（filevers 曾停在 0.2.0）
+$verTuple = '{0}, {1}, {2}, 0' -f @(
+    $numericMatch.Groups['major'].Value
+    $numericMatch.Groups['minor'].Value
+    $numericMatch.Groups['patch'].Value
+)
+$versionInfo = @"
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=($verTuple),
+    prodvers=($verTuple),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        u'080404B0',
+        [
+          StringStruct(u'CompanyName', u'codex-company'),
+          StringStruct(u'FileDescription', u'Codex Quota Monitor'),
+          StringStruct(u'FileVersion', u'$appVersion'),
+          StringStruct(u'InternalName', u'CodexQuota'),
+          StringStruct(u'LegalCopyright', u'MIT License'),
+          StringStruct(u'OriginalFilename', u'CodexQuota.exe'),
+          StringStruct(u'ProductName', u'Codex Quota'),
+          StringStruct(u'ProductVersion', u'$appVersion'),
+        ],
+      )
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1200])]),
+  ],
+)
+"@
+Set-Content -LiteralPath $versionInfoPath -Value $versionInfo -Encoding UTF8
+
 $basePython = $null
 $basePythonArgs = @()
 if ($Python) {
