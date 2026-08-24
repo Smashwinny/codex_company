@@ -20,7 +20,6 @@ import os
 import queue
 import re
 import shutil
-import signal
 import socket
 import subprocess
 import threading
@@ -30,6 +29,7 @@ import urllib.request
 from datetime import datetime
 from typing import Any, Optional
 
+from .. import proc
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
 
 logger = logging.getLogger("codex_quota.kimi")
@@ -43,15 +43,30 @@ class KimiError(Exception):
 
 
 def find_kimi_bin() -> Optional[str]:
-    """定位 kimi 可执行文件；KIMI_BIN 环境变量优先。找不到返回 None（provider 不启用）。"""
+    """定位 kimi 可执行文件；KIMI_BIN 环境变量优先。找不到返回 None（provider 不启用）。
+    Windows：X_OK 无执行位语义（退化为"存在即可"），候选带 .exe/.cmd 后缀。
+    """
+    import sys
+
+    is_win = sys.platform == "win32"
+
+    def _usable(path: str) -> bool:
+        if not os.path.isfile(path):
+            return False
+        return True if is_win else os.access(path, os.X_OK)
+
     override = os.environ.get("KIMI_BIN")
-    if override and os.path.isfile(override) and os.access(override, os.X_OK):
+    if override and _usable(override):
         return override
-    found = shutil.which("kimi")
+    found = shutil.which("kimi")  # PATHEXT 已覆盖 kimi.cmd / kimi.exe
     if found:
         return found
-    candidate = os.path.expanduser("~/.kimi-code/bin/kimi")
-    return candidate if os.path.isfile(candidate) else None
+    names = ["kimi.exe", "kimi.cmd"] if is_win else ["kimi"]
+    for name in names:
+        candidate = os.path.expanduser(f"~/.kimi-code/bin/{name}")
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def _parse_iso8601(ts: Any) -> Optional[float]:
@@ -142,13 +157,13 @@ class KimiProvider:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
 
-        self._proc = subprocess.Popen(
+        self._proc = proc.spawn_detached(
             self._spawn_args(port),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            start_new_session=True,  # 独立进程组，close 时 killpg 一锅端
         )
+        proc.record_child(self._proc.pid, "kimi-web")
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
@@ -176,17 +191,11 @@ class KimiProvider:
         raise KimiError("kimi web 启动超时或未输出 Token")
 
     def close(self) -> None:
-        proc, self._proc = self._proc, None
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=2)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        proc_, self._proc = self._proc, None
+        if proc_ is not None:
+            proc.kill_tree(proc_, timeout=2)
+            if proc_.poll() is not None:
+                proc.forget_child(proc_.pid)
 
     # ---------- 查询 ----------
 

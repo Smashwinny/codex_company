@@ -51,6 +51,7 @@ FG = "#e6edf3"
 FG_DIM = "#8b949e"
 
 HUD_WIDTH = 360        # 窗口固定宽度（原来 min 300/max 420 弹性，文本变化会抖动）
+MAX_WIDTH = HUD_WIDTH  # 兼容原最大宽度约束；固定宽度同时也是严格上限
 FOOTER_MAX_CHARS = 48  # 页脚单行最大字符数，超出截断
 ERROR_MAX_CHARS = 120  # 分区内联错误最大字符数（完整内容放 tooltip）
 

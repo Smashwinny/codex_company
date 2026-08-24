@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from codex_quota import autostart
 from codex_quota.settings import Settings
 
@@ -45,6 +47,11 @@ class TestSettings:
 
 
 class TestAutostart:
+    @pytest.fixture(autouse=True)
+    def _linux_branch(self, monkeypatch):
+        """这些用例验证 freedesktop 文件分支，不应随宿主平台改走注册表。"""
+        monkeypatch.setattr(autostart.sys, "platform", "linux")
+
     def test_enable_disable_cycle(self, tmp_path):
         cfg = str(tmp_path)
         assert autostart.is_enabled(cfg) is False

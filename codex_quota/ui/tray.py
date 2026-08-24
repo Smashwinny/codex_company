@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from PyQt6.QtCore import QObject
@@ -291,10 +292,21 @@ class QuotaTray(QObject):
         self._sync_toggle_text()
 
     def _toggle_autostart(self, checked: bool) -> None:
-        if checked:
-            autostart.enable()
-        else:
-            autostart.disable()
+        try:
+            if checked:
+                autostart.enable()
+            else:
+                autostart.disable()
+        except OSError as exc:
+            # Qt 槽里的未捕获异常在部分 PyQt/Windows 组合会直接终止进程。
+            # 写注册表失败时回滚视觉状态，让 HUD 继续运行并留下可诊断日志。
+            self.action_autostart.blockSignals(True)
+            self.action_autostart.setChecked(not checked)
+            self.action_autostart.blockSignals(False)
+            self.action_autostart.setToolTip(
+                tr("开机自启设置失败：{e}").format(e=exc))
+            logging.getLogger("codex_quota").warning(
+                "开机自启设置失败: %s", exc)
 
     def _copy_phone_url(self) -> None:
         from PyQt6.QtGui import QGuiApplication

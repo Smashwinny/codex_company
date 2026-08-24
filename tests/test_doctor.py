@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from codex_quota.app_server import CodexNotFoundError
+from codex_quota import doctor
 from codex_quota.doctor import FAIL, OK, WARN, has_failures, run_checks
 
 
@@ -63,3 +64,24 @@ class TestRunChecks:
         patch_finders(monkeypatch, codex="/bin/codex", login=True)
         items = run_checks(version_of=lambda p: None)
         assert by_key(items, "codex_bin").status == OK
+
+
+def test_default_version_hides_console_on_windows(monkeypatch):
+    captured = {}
+
+    class Result:
+        stdout = "codex-cli 1.2.3\n"
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return Result()
+
+    monkeypatch.setattr(doctor.sys, "platform", "win32")
+    monkeypatch.setattr("codex_quota.proc.IS_WINDOWS", True)
+    monkeypatch.setattr("codex_quota.proc.run_external", fake_run)
+
+    assert doctor._default_version(r"C:\npm\codex.cmd") == "codex-cli 1.2.3"
+    assert captured["argv"][:2] == ["cmd.exe", "/c"]
+    assert captured["kwargs"]["creationflags"] & 0x08000000

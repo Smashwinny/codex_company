@@ -206,6 +206,68 @@ class TestNotifyResets:
         assert len(events) == 1
 
 
+class TestActualResetText:
+    """延迟检测时推送正文标注实际重置时刻（reset_at - 窗口长度推算）。"""
+
+    def _snap_after_reset(self, minutes_since_reset: float,
+                          window_minutes: int = 10080):
+        """构造"重置已发生 N 分钟"的快照：reset_at 指向下次重置。"""
+        import time as _time
+
+        from codex_quota.app_server import QuotaWindow
+
+        snap = snap_with(weekly_used=0)
+        w = snap.primary_limit.primary
+        w.window_minutes = window_minutes
+        w.reset_at = _time.time() - minutes_since_reset * 60 + window_minutes * 60
+        return snap
+
+    def test_time_included_when_recent(self):
+        from codex_quota.notify import _actual_reset_text
+
+        snap = self._snap_after_reset(minutes_since_reset=90)
+        text = _actual_reset_text(snap, "本周")
+        assert text  # 90 分钟前 → HH:MM
+        assert ":" in text and "-" not in text
+
+    def test_time_with_date_when_over_20h(self):
+        from codex_quota.notify import _actual_reset_text
+
+        snap = self._snap_after_reset(minutes_since_reset=30 * 60)
+        text = _actual_reset_text(snap, "本周")
+        assert "-" in text  # 30 小时前 → MM-dd HH:MM
+
+    def test_unreasonable_extrapolation_suppressed(self):
+        from codex_quota.notify import _actual_reset_text
+
+        # reset_at 缺失 → 不写时间
+        snap = snap_with(weekly_used=0)
+        snap.primary_limit.primary.reset_at = None
+        assert _actual_reset_text(snap, "本周") == ""
+        # 推算落在窗口之外（数据自相矛盾）→ 宁可不写
+        snap2 = self._snap_after_reset(
+            minutes_since_reset=8 * 24 * 60, window_minutes=10080)
+        assert _actual_reset_text(snap2, "本周") == ""
+
+    def test_notify_body_contains_reset_time(self):
+        sent = []
+
+        class FakeNotifier:
+            def publish(self, title, body, **kw):
+                sent.append(body)
+                return True
+
+        watcher = ResetWatcher()
+        snap = self._snap_after_reset(minutes_since_reset=10)
+        snap.primary_limit.primary.used_percent = 91
+        notify_resets(FakeNotifier(), watcher, "codex", "Codex", snap)
+        snap2 = self._snap_after_reset(minutes_since_reset=5)
+        events = notify_resets(FakeNotifier(), watcher, "codex", "Codex", snap2)
+        assert len(events) == 1
+        assert "重置于" in sent[0]
+
+
+
 def _msg(text):
     return json.dumps({"event": "message", "message": text}).encode()
 

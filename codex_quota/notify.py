@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import threading
@@ -105,6 +106,31 @@ def _ascii_title(display_name: str) -> str:
     return f"{name} quota reset" if name else "codex-quota"
 
 
+def _actual_reset_text(snap: QuotaSnapshot, event: str,
+                       now: Optional[float] = None) -> str:
+    """从快照反推该事件的实际重置时刻（reset_at 指向下次重置，减去窗口长度）。
+
+    检测可能迟到（断网/机器休眠期间重置已经发生，恢复后第一次查询才发现），
+    只写"已重置回 100%"会让用户误以为刚刚才重置。匹配不上或时间不合理时
+    返回空串，不影响正文。
+    """
+    now = now if now is not None else time.time()
+    for limit in snap.limits:
+        bucket = limit.limit_name or limit.limit_id
+        for w in (limit.primary, limit.secondary):
+            if w is None or w.reset_at is None or not w.window_minutes:
+                continue
+            if event != w.label and event != f"{bucket} · {w.label}":
+                continue
+            actual = w.reset_at - w.window_minutes * 60
+            delay = now - actual
+            if not (0 <= delay < w.window_minutes * 60):
+                return ""  # 推算落在窗口外，数据不可信，宁可不写
+            fmt = "%H:%M" if delay < 20 * 3600 else "%m-%d %H:%M"
+            return dt.datetime.fromtimestamp(actual).strftime(fmt)
+    return ""
+
+
 def notify_resets(notifier: Optional[NtfyNotifier], watcher: ResetWatcher,
                   provider: str, display_name: str, snap: QuotaSnapshot,
                   excludes: frozenset[str] = frozenset()) -> list[str]:
@@ -112,9 +138,11 @@ def notify_resets(notifier: Optional[NtfyNotifier], watcher: ResetWatcher,
     events = watcher.check(provider, snap, excludes)
     if notifier is not None:
         for event in events:
+            when = _actual_reset_text(snap, event)
+            detail = f"{event} · 重置于 {when}" if when else event
             notifier.publish(
                 _ascii_title(display_name),
-                f"✅ {display_name} 额度已重置回 100%（{event}）",
+                f"✅ {display_name} 额度已重置回 100%（{detail}）",
             )
     return events
 

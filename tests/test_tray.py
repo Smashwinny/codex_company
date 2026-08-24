@@ -20,12 +20,6 @@ from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
 
 
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
-
-
 def snap():
     return codex_snapshot()
 
@@ -158,12 +152,32 @@ class TestQuotaTray:
         # 剩 9% ≤ 10 → 红色
         assert center.red() > 200 and center.green() < 100
 
-    def test_autostart_toggle(self, tray):
+    def test_autostart_toggle(self, tray, monkeypatch):
         from codex_quota import autostart
 
         t, _hud = tray
-        assert autostart.is_enabled() is False
+        state = {"enabled": False}
+        monkeypatch.setattr(
+            autostart, "is_enabled", lambda: state["enabled"])
+        monkeypatch.setattr(
+            autostart, "enable", lambda: state.update(enabled=True))
+        monkeypatch.setattr(
+            autostart, "disable", lambda: state.update(enabled=False))
+
+        assert state["enabled"] is False
         t.action_autostart.setChecked(True)
-        assert autostart.is_enabled() is True
+        assert state["enabled"] is True
         t.action_autostart.setChecked(False)
-        assert autostart.is_enabled() is False
+        assert state["enabled"] is False
+
+    def test_autostart_failure_rolls_back_without_escaping(self, tray, monkeypatch):
+        from codex_quota import autostart
+
+        t, _hud = tray
+        t.action_autostart.setChecked(False)
+        monkeypatch.setattr(
+            autostart, "enable", lambda: (_ for _ in ()).throw(
+                PermissionError("registry denied")))
+        t.action_autostart.setChecked(True)
+        assert t.action_autostart.isChecked() is False
+        assert "registry denied" in t.action_autostart.toolTip()

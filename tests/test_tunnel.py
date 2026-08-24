@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import os
+import sys
 
 import pytest
 
+from codex_quota.__main__ import (
+    _quiesce_tunnel_restart,
+    _start_tunnel_guarded,
+)
 from codex_quota.tunnel import Tunnel, TunnelError, find_cloudflared
 
 
@@ -34,6 +40,103 @@ class TestFindBinary:
         assert result is None or os.path.isfile(result)
 
 
+class TestRestartShutdownGuard:
+    def test_stopping_prevents_spawn(self):
+        import threading
+
+        class FakeTunnel:
+            def start(self):
+                raise AssertionError("退出置位后不得启动 cloudflared")
+
+        stopping = threading.Event()
+        stopping.set()
+        assert _start_tunnel_guarded(
+            FakeTunnel(), stopping, threading.Lock()) is None
+
+    def test_shutdown_sets_stop_immediately_and_waits_for_worker(self):
+        """新契约：stopping 立即无锁置位（不等 gate），在途 worker 由有界 join 等待。"""
+        import threading
+
+        entered = threading.Event()
+        release = threading.Event()
+        stopping = threading.Event()
+        gate = threading.Lock()
+
+        class FakeTunnel:
+            def start(self):
+                entered.set()
+                assert release.wait(2)
+                return "https://example.trycloudflare.com"
+
+        result = []
+        worker = threading.Thread(target=lambda: result.append(
+            _start_tunnel_guarded(FakeTunnel(), stopping, gate)))
+        worker.start()
+        assert entered.wait(1)
+
+        shutdown = threading.Thread(target=lambda: _quiesce_tunnel_restart(
+            None, stopping, gate, worker))
+        shutdown.start()
+        assert stopping.wait(0.5)  # 立即置位，不等 start() 结束
+        release.set()
+        worker.join(2)
+        shutdown.join(2)
+
+        assert result == ["https://example.trycloudflare.com"]
+        assert stopping.is_set()
+        assert not worker.is_alive()
+
+    def test_shutdown_join_is_bounded_when_worker_stuck(self):
+        """worker 卡死时 quiesce 在 join_timeout 内返回，不挂住退出路径。"""
+        import threading
+        import time
+
+        never = threading.Event()
+        stopping = threading.Event()
+
+        worker = threading.Thread(target=lambda: never.wait(30), daemon=True)
+        worker.start()
+
+        t0 = time.monotonic()
+        _quiesce_tunnel_restart(None, stopping, threading.Lock(), worker,
+                                join_timeout=0.2)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 5  # 有界返回（允许调度抖动，远小于无界的 30s）
+        assert stopping.is_set()
+        never.set()  # 放行 worker 收尾
+        worker.join(2)
+
+
+class TestTunnelTextDecoding:
+    def test_bad_utf8_stderr_is_replaced_and_url_still_parsed(self, monkeypatch):
+        raw = (b"INF cloudflared bad byte: \x91\n"
+               b"INF | https://utf8-safe.trycloudflare.com |\n")
+
+        class FakeProcess:
+            pid = 4242
+            stderr = io.TextIOWrapper(io.BytesIO(raw), encoding="gbk")
+
+            @staticmethod
+            def poll():
+                return None
+
+        fake = FakeProcess()
+        monkeypatch.setattr("codex_quota.tunnel.proc.spawn_detached",
+                            lambda *_args, **_kwargs: fake)
+        monkeypatch.setattr("codex_quota.tunnel.proc.record_child",
+                            lambda *_args: None)
+        monkeypatch.setattr("codex_quota.tunnel.proc.kill_tree",
+                            lambda *_args, **_kwargs: None)
+
+        tunnel = Tunnel(local_port=8642, cloudflared_bin="cloudflared",
+                        startup_timeout=2)
+        assert tunnel.start() == "https://utf8-safe.trycloudflare.com"
+        assert fake.stderr.encoding.lower().replace("-", "") == "utf8"
+        assert fake.stderr.errors == "replace"
+        tunnel.stop()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组/执行位语义，Windows 分支由 test_proc 等注入式测试覆盖")
 class TestTunnelLifecycle:
     def test_url_parsed_from_stderr(self, fake_cloudflared):
         t = Tunnel(local_port=8642, cloudflared_bin=fake_cloudflared, startup_timeout=10)

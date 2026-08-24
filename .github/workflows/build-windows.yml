@@ -1,0 +1,53 @@
+name: build-windows-installer
+
+# 推送到主分支/功能分支或打 tag 时，在 GitHub 的 Windows 构建机上自动产出
+# 安装包。产物两处可取：
+#   - 任何运行：Actions 页面 → 该次运行 → Artifacts（90 天保留）
+#   - tag（v*）：自动创建/更新同名 Release 并附上安装包
+on:
+  push:
+    branches: [main, feat/multi-platform]
+    tags: ["v*"]
+  workflow_dispatch:  # 也支持在 Actions 页面手动触发
+
+permissions:
+  contents: write  # tag 时需要：创建 Release 并上传附件
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 Inno Setup（choco 默认装到 Program Files (x86)，Find-Iscc 可自动发现）
+        run: choco install innosetup -y --no-progress
+
+      - name: 构建安装包（PyInstaller + Inno Setup，含 cloudflared 下载与烟测）
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File packaging/windows/build-installer.ps1 -Python "python"
+
+      - name: 上传构建产物（Actions Artifacts）
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-quota-windows-installer
+          path: packaging/windows/.build/output/
+          if-no-files-found: error
+
+      - name: 更新滚动 latest-windows 发布（分支推送时每次覆盖）
+        if: github.event_name == 'push' && !startsWith(github.ref, 'refs/tags/')
+        run: |
+          gh release delete latest-windows --yes --cleanup-tag 2>$null; if ($LASTEXITCODE -ne 0) { Write-Host "尚无旧 release，跳过删除" }
+          gh release create latest-windows packaging/windows/.build/output/*.exe --title "latest-windows（滚动最新构建）" --notes "每次推送自动覆盖更新。当前对应 commit: ${{ github.sha }}。此发布永远指向最新代码的安装包；正式版本见带版本号的 Release。"
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tag 时发布到 GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: packaging/windows/.build/output/*.exe

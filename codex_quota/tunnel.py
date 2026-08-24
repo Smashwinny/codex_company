@@ -15,11 +15,13 @@ import os
 import queue
 import re
 import shutil
-import signal
 import subprocess
+import sys
 import threading
 import time
 from typing import Optional
+
+from . import proc
 
 TUNNEL_URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
 
@@ -48,12 +50,14 @@ class RestartPolicy:
 
 
 def find_cloudflared() -> Optional[str]:
-    """定位 cloudflared：PATH → 项目 vendor/bin/。找不到返回 None（仅局域网模式）。"""
+    """定位 cloudflared：PATH → 项目 vendor/bin/（Windows 为 cloudflared.exe）。
+    找不到返回 None（仅局域网模式）。"""
     found = shutil.which("cloudflared")
     if found:
         return found
+    name = "cloudflared.exe" if sys.platform == "win32" else "cloudflared"
     vendor = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "vendor", "bin", "cloudflared")
+                          "vendor", "bin", name)
     return vendor if os.path.isfile(vendor) else None
 
 
@@ -80,14 +84,18 @@ class Tunnel:
         if self._bin is None:
             raise TunnelError("未找到 cloudflared（运行 install.sh 会自动下载）")
         self.stop()
-        self._proc = subprocess.Popen(
+        self._proc = proc.spawn_detached(
             [self._bin, "tunnel", "--url", f"http://127.0.0.1:{self._local_port}",
              "--no-autoupdate"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,  # 地址打在 stderr
             text=True,
-            start_new_session=True,
         )
+        proc.record_child(self._proc.pid, "cloudflared")
+        assert self._proc.stderr is not None
+        # Windows 的 locale 常为 GBK，但 cloudflared 的结构化日志固定输出 UTF-8；
+        # 显式重配文本管道并容错异常字节，避免 pump 线程因解码错误退出。
+        self._proc.stderr.reconfigure(encoding="utf-8", errors="replace")
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
@@ -119,15 +127,9 @@ class Tunnel:
         raise TunnelError("cloudflared 启动超时或未输出公网地址")
 
     def stop(self) -> None:
-        proc, self._proc = self._proc, None
+        proc_, self._proc = self._proc, None
         self.public_url = None
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait(timeout=3)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
-                os.killpg(proc.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
+        if proc_ is not None:
+            proc.kill_tree(proc_, timeout=3)
+            if proc_.poll() is not None:
+                proc.forget_child(proc_.pid)

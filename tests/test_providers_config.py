@@ -26,6 +26,8 @@ class TestRoundTrip:
         assert load_providers_config(path) == cfg
 
     def test_file_mode_600(self, tmp_path):
+        if os.name != "posix":
+            pytest.skip("Windows 无 POSIX 权限位（%APPDATA% 目录 ACL 等价保护）")
         path = str(tmp_path / "providers.toml")
         save_providers_config({"kimi": {"enabled": True}}, path)
         mode = stat.S_IMODE(os.stat(path).st_mode)
@@ -46,7 +48,8 @@ class TestParsing:
             "[providers.deepseek]\n"
             'type = "deepseek"\n'
             "interval = 300\n"
-            'api_key = "$DS_KEY"\n'
+            'api_key = "$DS_KEY"\n',
+            encoding="utf-8",
         )
         cfg = load_providers_config(str(path))
         assert cfg["kimi"]["enabled"] is False

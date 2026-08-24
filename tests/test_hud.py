@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 pytest.importorskip("PyQt6")
@@ -20,12 +22,6 @@ from codex_quota.ui.hud import FloatingHud, _countdown_text
 from codex_quota.ui.widgets import QuotaBar, threshold_color
 from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
-
-
-@pytest.fixture(scope="session")
-def qapp():
-    app = QApplication.instance() or QApplication([])
-    yield app
 
 
 def snap():
@@ -196,6 +192,7 @@ class TestInteractions:
 
         store = StateStore(cache_path=default_cache_path("codex"))
         used_snap = snap()
+        used_snap.fetched_at = time.time()  # 保持在产品允许加载的 24h 缓存窗口内
         used_snap.primary_limit.primary.used_percent = 91
         store.on_success(used_snap)
 

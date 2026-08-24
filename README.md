@@ -1,6 +1,6 @@
 # codex-quota
 
-Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮窗 + 系统托盘。
+Windows / Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮窗 + 系统托盘。
 
 - **Codex 数据源**：本地 `codex app-server` 的只读 JSON-RPC 方法 `account/rateLimits/read`，
   不读取 `auth.json`、不接触登录凭证、网络零外发。
@@ -16,7 +16,7 @@ Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**），悬浮
 
 | 依赖 | 必需性 | 说明 |
 |------|--------|------|
-| Python ≥ 3.10 | **必需** | 主程序运行时 |
+| Python ≥ 3.10 | 源码安装必需 | Windows 独立安装包已内置，无需另装 |
 | Codex CLI（已 `codex login`） | **必需** | Codex 额度的数据源 |
 | libxcb-cursor0 | 悬浮窗必需 | Qt xcb 插件依赖；无 root 时安装脚本自动下载到 `vendor/` |
 | Kimi CLI（`kimi login`） | 可选 | 检测到就自动增加 Kimi 分区，没有则只显示 Codex |
@@ -34,6 +34,31 @@ cd codex_company
 → 处理 libxcb-cursor（系统没有就免 root 下载到 `vendor/`）→ 准备 cloudflared
 → 创建应用菜单桌面入口（含图标）→ 软链 `codex-quota` 命令到 `~/.local/bin`。
 幂等，可重复运行；交互终端下装完会问是否立即启动。
+
+### Windows
+
+#### 独立安装包（推荐）
+
+1. 打开 [GitHub Releases](https://github.com/Smashwinny/codex_company/releases/latest)
+2. 下载 `codex-quota-*-windows-x64-setup.exe`
+3. 双击安装，然后从开始菜单启动 **Codex Quota**
+
+安装包已内置 Python、PyQt6 和 cloudflared，不需要先配置 Python
+环境；Codex CLI 仍需单独安装并完成 `codex login`。
+
+#### 从源码安装
+
+```powershell
+git clone https://github.com/Smashwinny/codex_company.git
+cd codex_company
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+与 Linux 版一致的流程：检查依赖 → 创建 `.venv` 装 PyQt6 → 下载
+`cloudflared-windows-amd64.exe` → 创建开始菜单快捷方式（**Codex Quota**，黄色闪电图标）。
+启动：开始菜单搜索 Codex Quota，或 `bin\codex-quota.cmd`。开机自启走注册表
+Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\codex-quota\`，
+日志在 `%LOCALAPPDATA%\codex-quota\hud.log`。
 
 ### 运行（三选一）
 

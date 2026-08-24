@@ -15,13 +15,17 @@ import os
 import queue
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 DEFAULT_TIMEOUT = 15.0  # 秒；超时即 kill 子进程（云端查询实测 2-8s，8s 太紧）
-CLIENT_INFO = {"name": "codex-quota", "version": "0.1.0"}
+from . import __version__
+
+
+CLIENT_INFO = {"name": "codex-quota", "version": __version__}
 
 
 class AppServerError(Exception):
@@ -143,32 +147,89 @@ class QuotaSnapshot:
 def find_codex_bin() -> str:
     """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖。
 
-    PATH 找不到时回退搜索 nvm 版本目录——nvm 切换默认 Node 版本后，
-    装在旧版本全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，
-    nvm 切到 v24 后"未找到 codex"）。
+    PATH 找不到时回退搜索：
+    - Linux/mac: nvm 版本目录——nvm 切换默认 Node 版本后，装在旧版本
+      全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，nvm 切到
+      v24 后"未找到 codex"）
+    - Windows: npm 全局目录的 codex.cmd（X_OK 无执行位语义，不查）
     """
+    is_win = sys.platform == "win32"
+
+    def _executable(path: str) -> bool:
+        if not os.path.isfile(path):
+            return False
+        return True if is_win else os.access(path, os.X_OK)
+
     override = os.environ.get("CODEX_BIN")
     if override:
-        if os.path.isfile(override) and os.access(override, os.X_OK):
+        if _executable(override):
             return override
         raise CodexNotFoundError(f"CODEX_BIN 指向的文件不可执行: {override}")
-    path = shutil.which("codex")
+    path = shutil.which("codex")  # Windows 下 PATHEXT 已覆盖 codex.cmd
     if path is not None:
         return path
     import glob
 
-    nvm_candidates = sorted(
-        glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions", "node",
-                               "*", "bin", "codex")),
-        reverse=True,  # 版本号大的优先
-    )
-    for candidate in nvm_candidates:
-        if os.access(candidate, os.X_OK):
+    if is_win:
+        candidates = _windows_codex_candidates()
+    else:
+        candidates = sorted(
+            glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions",
+                                   "node", "*", "bin", "codex")),
+            reverse=True,  # 版本号大的优先
+        )
+    for candidate in candidates:
+        if _executable(candidate):
             return candidate
     raise CodexNotFoundError(
         "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
         "或设置 CODEX_BIN 环境变量。"
     )
+
+
+_NPM_PREFIX_UNSET = object()
+_npm_prefix_cache: object = _NPM_PREFIX_UNSET
+
+
+def _npm_prefix() -> Optional[str]:
+    """npm 全局 prefix（可被 npm config 自定义，默认 %APPDATA%\\npm）。
+
+    只在 PATH 找不到 codex 的兜底路径上调用一次并缓存；查询失败返回 None。
+    """
+    global _npm_prefix_cache
+    if _npm_prefix_cache is not _NPM_PREFIX_UNSET:
+        return _npm_prefix_cache or None  # type: ignore[return-value]
+    prefix = ""
+    npm = shutil.which("npm")
+    if npm:
+        try:
+            from .proc import hidden_console_kwargs, run_external, wrap_cmd_shim
+
+            out = run_external(wrap_cmd_shim([npm, "config", "get", "prefix"]),
+                               capture_output=True, text=True, timeout=10,
+                               **hidden_console_kwargs())
+            if out.returncode == 0:
+                prefix = (out.stdout or "").strip()
+        except Exception:
+            prefix = ""
+    _npm_prefix_cache = prefix
+    return prefix or None
+
+
+def _windows_codex_candidates() -> list[str]:
+    """Windows 下 codex 的常见安装位置（PATH 之外的兜底，按可能性排序）。"""
+    appdata = os.environ.get("APPDATA") or ""
+    local = os.environ.get("LOCALAPPDATA") or ""
+    candidates = []
+    prefix = _npm_prefix()  # npm 自定义 prefix（与默认不同才值得查）
+    if prefix:
+        candidates.append(os.path.join(prefix, "codex.cmd"))
+    candidates += [
+        os.path.join(appdata, "npm", "codex.cmd"),              # npm 全局默认
+        os.path.join(local, "Programs", "codex", "codex.exe"),  # 独立安装包形态
+        os.path.join(os.path.expanduser("~"), ".codex", "bin", "codex.exe"),
+    ]
+    return candidates
 
 
 def codex_home() -> str:
@@ -297,13 +358,18 @@ class AppServerClient:
         self.timeout = timeout
 
     def read_rate_limits(self) -> QuotaSnapshot:
-        proc = subprocess.Popen(
-            [self.codex_bin, "app-server"],
+        from .proc import hidden_console_kwargs, popen_external, wrap_cmd_shim
+
+        # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
+        # 不显式禁止窗口就可能在每次额度刷新时闪出黑框
+        proc = popen_external(
+            wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
             bufsize=1,
+            **hidden_console_kwargs(),
         )
         lines: queue.Queue[str] = queue.Queue()
 
@@ -359,6 +425,13 @@ class AppServerClient:
     @staticmethod
     def _reap(proc: subprocess.Popen) -> None:
         if proc.poll() is not None:
+            return
+        if sys.platform == "win32":
+            # npm 的 codex.cmd 会形成 cmd.exe -> node/codex 进程树；只 terminate
+            # 根 cmd 会留下 app-server。复用统一的 Windows taskkill /T 回收。
+            from .proc import kill_tree
+
+            kill_tree(proc, timeout=1)
             return
         proc.terminate()
         try:
