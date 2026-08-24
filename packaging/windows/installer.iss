@@ -87,7 +87,8 @@ var
 function InitializeSetup: Boolean;
 var
   ResultCode: Integer;
-  PidFile, AppPid: String;
+  PidFile: String;
+  AppPid: AnsiString;  { LoadStringFromFile 的第二参数类型必须是 AnsiString }
 begin
   { 覆盖安装前强制结束运行中的实例。CloseApplications 对本应用无效：
     它发 WM_CLOSE，而托盘形态下关窗只是隐藏，进程不退，文件一直被占用。 }
