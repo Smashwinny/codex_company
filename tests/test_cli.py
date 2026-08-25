@@ -96,7 +96,10 @@ class TestErrorHint:
 
 class TestRunCliErrors:
     def test_codex_not_found(self, monkeypatch, capsys):
+        # CODEX_BIN 无效 + 其他途径全部落空 → 未找到（退出码 2，提示含 CODEX_BIN）
         monkeypatch.setenv("CODEX_BIN", "/nonexistent/codex")
+        monkeypatch.setattr("shutil.which", lambda _name: None)
+        monkeypatch.setattr("os.path.expanduser", lambda p: "/nonexistent" + p[1:])
         code = run_cli([])
         assert code == 2
         assert "CODEX_BIN" in capsys.readouterr().err
