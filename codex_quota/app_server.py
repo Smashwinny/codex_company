@@ -185,6 +185,10 @@ def _discover_codex_bin() -> str:
 
     def _usable(path: str) -> bool:
         if is_win:
+            # 强制可执行后缀：防止把目录（如 CODEX_BIN 指向 ...\bin 且 isdir
+            # 因 junction ACL 返回 False）当可执行文件返回
+            if not path.lower().endswith((".exe", ".cmd", ".bat")):
+                return False
             return os.path.lexists(path)
         return os.path.isfile(path) and os.access(path, os.X_OK)
 
@@ -211,8 +215,17 @@ def _discover_codex_bin() -> str:
             "CODEX_BIN 指向的文件不可执行，忽略并继续自动发现: %s", override)
     tried = []
     if is_win:
-        # shutil.which 的 isfile 过滤会误杀 MSIX shim——手动扫 PATH，只认存在
-        for d in os.environ.get("PATH", "").split(os.pathsep):
+        # shutil.which 的 isfile 过滤会误杀 MSIX shim——手动扫 PATH，只认存在。
+        # 进程环境可能是登录时的旧快照（工具装好后没注销重登就扫不到），
+        # 注册表里的用户/系统 PATH 才是最新的——合并去重
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        try:
+            for entry in _windows_registry_path_entries():
+                if entry not in path_entries:
+                    path_entries.append(entry)
+        except Exception:
+            pass
+        for d in path_entries:
             if not d:
                 continue
             for name in ("codex.exe", "codex.cmd", "codex.bat"):
@@ -276,6 +289,30 @@ def _npm_prefix() -> Optional[str]:
             prefix = ""
     _npm_prefix_cache = prefix
     return prefix or None
+
+
+def _windows_registry_path_entries() -> list[str]:
+    """从注册表读最新的用户/系统 PATH。
+
+    进程环境是启动时刻（可能开机自启）的快照——工具装好后没注销重登，
+    进程 PATH 里就没有新条目（内测实测：终端 where 能找到，应用找不到）。
+    注册表里的才是最新的。
+    """
+    import winreg
+
+    entries: list[str] = []
+    for root, sub in (
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ):
+        try:
+            with winreg.OpenKey(root, sub) as k:
+                raw, _ = winreg.QueryValueEx(k, "Path")
+            entries.extend(e for e in os.path.expandvars(str(raw)).split(";") if e)
+        except (FileNotFoundError, OSError):
+            continue
+    return entries
 
 
 def _windows_codex_candidates() -> list[str]:
