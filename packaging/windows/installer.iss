@@ -73,7 +73,9 @@ Source: "{#PyInstallerDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesub
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"
-Name: "{commondesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
+; {userdesktop} 而非 {commondesktop}：后者会解析到 C:\Users\Public\Desktop，
+; 免管理员安装写不进去（IPersistFile::Save failed 0x80070005 实测）
+Name: "{userdesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\卸载 {#AppName}"; Filename: "{uninstallexe}"
 
 [Registry]
