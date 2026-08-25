@@ -14,7 +14,7 @@ from PyQt6.QtCore import QObject
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
-from .. import autostart
+from .. import __version__, autostart
 from ..i18n import tr
 from ..state import ProviderView, StateStore, key_excluded, toggle_window, window_keys
 from .widgets import COLOR_UNKNOWN, threshold_color
@@ -156,6 +156,9 @@ class QuotaTray(QObject):
         self.action_notify.triggered.connect(self._open_notify_guide)
         self.action_wizard = QAction(tr("初始设置 / 环境自检"), self)
         self.action_wizard.triggered.connect(self._open_wizard)
+        self.action_logs = QAction(tr("打开日志目录"), self)
+        self.action_logs.setToolTip(tr("用文件管理器打开日志所在文件夹（排障时发我 hud.log）"))
+        self.action_logs.triggered.connect(self._open_log_dir)
         self.action_providers = QAction(tr("管理额度来源"), self)
         self.action_providers.triggered.connect(self._open_providers)
 
@@ -194,6 +197,7 @@ class QuotaTray(QObject):
         self._menu.addAction(self.action_push_url)
         self._menu.addAction(self.action_notify)
         self._menu.addAction(self.action_wizard)
+        self._menu.addAction(self.action_logs)
         self._menu.addAction(self.action_providers)
         self._menu.addMenu(self._thresh_menu)
         self._menu.addMenu(self._color_checks.menu)
@@ -228,7 +232,7 @@ class QuotaTray(QObject):
             items, set(self._hud._settings.get("notify_excludes") or []))
 
         lines = summary_lines(views)
-        tip = tr("⚡ 额度监控") + "\n" + "\n".join(lines)
+        tip = f"{tr('⚡ 额度监控')} v{__version__}\n" + "\n".join(lines)
         stale = next((v for v in views if v.state.stale), None)
         if stale is not None:
             fresh = StateStore.freshness_text(stale.state.fetched_at)
@@ -352,6 +356,14 @@ class QuotaTray(QObject):
         from .wizard import SetupWizardDialog
 
         SetupWizardDialog(self._hud._settings, parent=self._hud).exec()
+
+    def _open_log_dir(self) -> None:
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        from ..sysdirs import cache_dir
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(cache_dir()))
 
     def _open_providers(self) -> None:
         from .providers_dialog import ProvidersDialog

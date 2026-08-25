@@ -90,6 +90,19 @@ def _run_hud(args: list[str]) -> int:
     from .providers import default_providers
     from .ui import FloatingHud
 
+    # 日志自解释：版本/形态/codex 定位结果——远程排障靠 hud.log 一次定位
+    _log0 = logging.getLogger("codex_quota")
+    from . import __version__
+
+    _log0.info("codex-quota v%s 启动（frozen=%s, exe=%s）", __version__,
+               getattr(sys, "frozen", False), sys.executable)
+    try:
+        from .app_server import find_codex_bin
+
+        _log0.info("codex CLI: %s", find_codex_bin())
+    except Exception as exc:
+        _log0.warning("codex CLI 定位失败: %s", exc)
+
     app = QApplication([sys.argv[0], *args])
     app.setApplicationName("codex-quota")
 

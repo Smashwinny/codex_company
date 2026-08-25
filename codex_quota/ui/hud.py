@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .. import __version__
 from ..app_server import QuotaSnapshot, QuotaWindow
 from ..cli import error_hint
 from ..fetcher import QuotaFetcher, RefreshScheduler
@@ -225,7 +226,7 @@ class FloatingHud(QWidget):
     # ---------- UI 搭建 ----------
 
     def _build_ui(self) -> None:
-        self._title = QLabel(tr("⚡ 额度监控"))
+        self._title = QLabel(f"{tr('⚡ 额度监控')} v{__version__}")  # 版本号进标题栏：任何截图都能认出构建
         self._title.setStyleSheet(f"color: {FG}; font-weight: bold;")
         self._model_badge = QLabel()
         self._model_badge.setTextFormat(Qt.TextFormat.RichText)
