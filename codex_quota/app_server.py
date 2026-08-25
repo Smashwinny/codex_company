@@ -170,12 +170,17 @@ def find_codex_bin() -> str:
 
         logging.getLogger("codex_quota.app_server").warning(
             "CODEX_BIN 指向的文件不可执行，忽略并继续自动发现: %s", override)
+    tried = []
     path = shutil.which("codex")  # Windows 下 PATHEXT 已覆盖 codex.cmd
     if path is not None:
         return path
+    tried.append("PATH")
     import glob
 
     if is_win:
+        prefix = _npm_prefix()
+        if prefix:
+            tried.append(f"npm prefix: {prefix}")
         candidates = _windows_codex_candidates()
     else:
         candidates = sorted(
@@ -186,9 +191,11 @@ def find_codex_bin() -> str:
     for candidate in candidates:
         if _executable(candidate):
             return candidate
+    tried.extend(candidates)
+    # 报错信息直接带上所有找过的位置——远程排障不用来回要日志
     raise CodexNotFoundError(
         "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
-        "或设置 CODEX_BIN 环境变量。"
+        "或设置 CODEX_BIN 环境变量。\n已查找: " + "；".join(tried)
     )
 
 
