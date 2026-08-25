@@ -6,6 +6,8 @@ fixture 来自 2026-08-12 在本机（codex-cli 0.147.0, prolite 套餐）对
 
 from __future__ import annotations
 
+import os
+
 import pytest
 import sys
 
@@ -325,3 +327,43 @@ class TestCodexBinOverride:
         good.write_text("@echo off\n")
         monkeypatch.setattr(app_server.shutil, "which", lambda _n: str(good))
         assert find_codex_bin() == str(good)
+
+    def test_win32_exists_relaxed_over_isfile(self, monkeypatch, tmp_path):
+        """win32 下 isfile 为 False 但 exists 为 True 的文件（shim/特殊文件）应被接受。"""
+        from codex_quota import app_server
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr(app_server.shutil, "which", lambda _n: None)
+        monkeypatch.setattr(app_server, "_npm_prefix_cache",
+                            app_server._NPM_PREFIX_UNSET)
+        monkeypatch.setenv("APPDATA", str(tmp_path / "none1"))
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        shim = tmp_path / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"
+        shim.parent.mkdir(parents=True)
+        os.mkfifo(shim)  # FIFO：exists=True, isfile=False
+        assert find_codex_bin() == str(shim)
+
+    def test_codex_bin_pointing_to_directory(self, monkeypatch, tmp_path):
+        """CODEX_BIN 设成目录（...\\bin）时自动补 codex.exe。"""
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        bindir = tmp_path / "OpenAI" / "Codex" / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "codex.exe").write_text("MZ")
+        monkeypatch.setenv("CODEX_BIN", str(bindir))
+        assert find_codex_bin() == str(bindir / "codex.exe")
+
+    def test_win32_manual_path_scan(self, monkeypatch, tmp_path):
+        """win32 下手扫 PATH（不依赖 shutil.which 的 isfile 过滤）。"""
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        fake_dir = tmp_path / "bin"
+        fake_dir.mkdir()
+        (fake_dir / "codex.exe").write_text("MZ")
+        monkeypatch.setenv("PATH", str(fake_dir))
+        assert find_codex_bin() == str(fake_dir / "codex.exe")

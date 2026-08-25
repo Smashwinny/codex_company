@@ -8,3 +8,4 @@ dist/
 vendor/
 tmp/
 packaging/windows/.build/
+issue/

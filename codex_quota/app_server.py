@@ -145,37 +145,65 @@ class QuotaSnapshot:
 
 
 def find_codex_bin() -> str:
-    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖。
+    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖（容忍指向目录）。
 
     PATH 找不到时回退搜索：
     - Linux/mac: nvm 版本目录——nvm 切换默认 Node 版本后，装在旧版本
       全局下的 codex 会从 PATH 消失（实测踩坑：v20 装 codex，nvm 切到
       v24 后"未找到 codex"）
-    - Windows: npm 全局目录的 codex.cmd（X_OK 无执行位语义，不查）
+    - Windows: 手动扫 PATH + npm prefix + 常见安装位置。注意 MSIX/商店版
+      codex 的 codex.exe 是指向 WindowsApps 的重解析 shim——isfile/exists/
+      shutil.which 的 stat 跟随链接时会被 WindowsApps 的 ACL 拒绝
+      （内测实测：文件明明在、where 能找到，exists 也返回 False），
+      所以 Windows 上用 lexists（只查链接节点本身，不跟随）。
+      "能不能跑"由 spawn 兜底。
     """
     is_win = sys.platform == "win32"
 
-    def _executable(path: str) -> bool:
-        if not os.path.isfile(path):
-            return False
-        return True if is_win else os.access(path, os.X_OK)
+    def _usable(path: str) -> bool:
+        if is_win:
+            return os.path.lexists(path)
+        return os.path.isfile(path) and os.access(path, os.X_OK)
 
     override = os.environ.get("CODEX_BIN")
     if override:
-        if _executable(override):
-            return override
+        candidates = [override]
+        if os.path.isdir(override):
+            # 容忍指向目录（内测实测有人设成 ...\bin 目录）：补可执行名
+            candidates = [os.path.join(override, n)
+                          for n in ("codex.exe", "codex.cmd", "codex.bat",
+                                    "codex")]
+        for cand in candidates:
+            if _usable(cand):
+                return cand
         # 指向无效路径（填错/已卸载残留）不应硬失败——警告后继续正常发现流程，
         # 否则一个过期的环境变量会把整个定位链路锁死（内测实测踩到）
         import logging
 
         logging.getLogger("codex_quota.app_server").warning(
             "CODEX_BIN 指向的文件不可执行，忽略并继续自动发现: %s", override)
-    path = shutil.which("codex")  # Windows 下 PATHEXT 已覆盖 codex.cmd
-    if path is not None:
-        return path
+    tried = []
+    if is_win:
+        # shutil.which 的 isfile 过滤会误杀 MSIX shim——手动扫 PATH，只认存在
+        for d in os.environ.get("PATH", "").split(os.pathsep):
+            if not d:
+                continue
+            for name in ("codex.exe", "codex.cmd", "codex.bat"):
+                cand = os.path.join(d, name)
+                if os.path.lexists(cand):
+                    return cand
+        tried.append("PATH")
+    else:
+        path = shutil.which("codex")
+        if path is not None:
+            return path
+        tried.append("PATH")
     import glob
 
     if is_win:
+        prefix = _npm_prefix()
+        if prefix:
+            tried.append(f"npm prefix: {prefix}")
         candidates = _windows_codex_candidates()
     else:
         candidates = sorted(
@@ -184,11 +212,13 @@ def find_codex_bin() -> str:
             reverse=True,  # 版本号大的优先
         )
     for candidate in candidates:
-        if _executable(candidate):
+        if _usable(candidate):
             return candidate
+    tried.extend(candidates)
+    # 报错信息直接带上所有找过的位置——远程排障不用来回要日志
     raise CodexNotFoundError(
         "未找到 codex 可执行文件。请先安装 Codex CLI 并登录（codex login），"
-        "或设置 CODEX_BIN 环境变量。"
+        "或设置 CODEX_BIN 环境变量。\n已查找: " + "；".join(tried)
     )
 
 

@@ -115,6 +115,9 @@ _EN: dict[str, str] = {
     "手机访问（局域网 + 公网隧道）": "Phone access (LAN + public tunnel)",
     "额度重置推送（ntfy）": "Quota reset push (ntfy)",
     "初始设置 / 环境自检": "Setup / Environment check",
+    "打开日志目录": "Open log folder",
+    "用文件管理器打开日志所在文件夹（排障时发我 hud.log）":
+        "Open the log folder (send hud.log when reporting issues)",
     # provider 管理
     "管理额度来源": "Manage providers",
     "本地工具": "Local tools",
