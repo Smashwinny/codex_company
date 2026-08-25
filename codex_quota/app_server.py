@@ -479,8 +479,11 @@ class AppServerClient:
             )
         except OSError as exc:
             # WinError 5（拒绝访问）常见于商店/MSIX 版 Codex 桌面应用的包内
-            # exe——它不是 CLI，被容器锁住无法由外部进程启动（内测实测）
-            invalidate_codex_bin(self.codex_bin)
+            # exe——它不是 CLI，被容器锁住无法由外部进程启动（内测实测）。
+            # 黑名单只在 Windows 生效：POSIX 的 spawn 失败多是瞬时性的
+            # （资源压力等），拉黑唯一正确的 codex 路径反而是回退
+            if sys.platform == "win32":
+                invalidate_codex_bin(self.codex_bin)
             raise AppServerError(
                 f"无法启动 codex（{self.codex_bin}）: {exc}\n"
                 f"提示：如果装的是微软商店的 Codex 桌面应用，它和 Codex CLI "
