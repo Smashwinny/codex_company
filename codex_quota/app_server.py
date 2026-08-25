@@ -478,13 +478,14 @@ class AppServerClient:
                 **hidden_console_kwargs(),
             )
         except OSError as exc:
-            # WinError 5（拒绝访问）常见于商店/MSIX 版 codex 的包内 exe——
-            # 拉黑该路径让下次发现自动切换到执行别名等其他候选
+            # WinError 5（拒绝访问）常见于商店/MSIX 版 Codex 桌面应用的包内
+            # exe——它不是 CLI，被容器锁住无法由外部进程启动（内测实测）
             invalidate_codex_bin(self.codex_bin)
             raise AppServerError(
                 f"无法启动 codex（{self.codex_bin}）: {exc}\n"
-                f"若是商店版 codex，请把 CODEX_BIN 设为 "
-                f"%LOCALAPPDATA%\\Microsoft\\WindowsApps\\codex.exe"
+                f"提示：如果装的是微软商店的 Codex 桌面应用，它和 Codex CLI "
+                f"不是一回事——请安装 Node.js 后运行 npm i -g @openai/codex，"
+                f"再 codex login"
             ) from exc
         lines: queue.Queue[str] = queue.Queue()
 
