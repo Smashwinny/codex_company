@@ -156,9 +156,13 @@ def find_codex_bin() -> str:
     is_win = sys.platform == "win32"
 
     def _executable(path: str) -> bool:
-        if not os.path.isfile(path):
-            return False
-        return True if is_win else os.access(path, os.X_OK)
+        # Windows 上用 exists 而非 isfile：部分安装形态（OpenAI 独立安装包等）
+        # 的 codex.exe 是重解析点/shim 文件——where/双击/CreateProcess 都能跑，
+        # 但 isfile 跟随 stat 目标时可能 EACCES 误判 False（内测实测踩到）。
+        # "能不能真跑"由 doctor 的 --version 探测兜底，定位层不误杀。
+        if is_win:
+            return os.path.exists(path)
+        return os.path.isfile(path) and os.access(path, os.X_OK)
 
     override = os.environ.get("CODEX_BIN")
     if override:
