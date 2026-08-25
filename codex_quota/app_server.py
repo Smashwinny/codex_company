@@ -144,8 +144,14 @@ class QuotaSnapshot:
         return self.limits[0] if self.limits else None
 
 
+_resolved_bin: Optional[str] = None
+_blacklisted_bins: set[str] = set()
+
+
 def find_codex_bin() -> str:
-    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖（容忍指向目录）。
+    """定位 codex 可执行文件（结果缓存；spawn 失败的路径拉黑后自动换候选）。
+
+    CODEX_BIN 环境变量可覆盖（容忍指向目录）。
 
     PATH 找不到时回退搜索：
     - Linux/mac: nvm 版本目录——nvm 切换默认 Node 版本后，装在旧版本
@@ -156,14 +162,35 @@ def find_codex_bin() -> str:
       shutil.which 的 stat 跟随链接时会被 WindowsApps 的 ACL 拒绝
       （内测实测：文件明明在、where 能找到，exists 也返回 False），
       所以 Windows 上用 lexists（只查链接节点本身，不跟随）。
-      "能不能跑"由 spawn 兜底。
+      "能不能跑"由 spawn 兜底：spawn 失败的路径进黑名单，下次自动换候选。
     """
+    global _resolved_bin
+    if _resolved_bin is not None:
+        return _resolved_bin
+    _resolved_bin = _discover_codex_bin()
+    return _resolved_bin
+
+
+def invalidate_codex_bin(path: str) -> None:
+    """spawn 失败（如 MSIX 包内 exe 被 WinError 5 拒绝）时拉黑并清缓存，
+    下次查询自动发现顺位切换到下一个候选——无需用户手动改环境变量。"""
+    global _resolved_bin
+    if _resolved_bin == path:
+        _resolved_bin = None
+    _blacklisted_bins.add(path)
+
+
+def _discover_codex_bin() -> str:
     is_win = sys.platform == "win32"
 
     def _usable(path: str) -> bool:
         if is_win:
             return os.path.lexists(path)
         return os.path.isfile(path) and os.access(path, os.X_OK)
+
+    def _ok(path: str) -> bool:
+        """存在 且 不在 spawn 失败黑名单里。"""
+        return path not in _blacklisted_bins and _usable(path)
 
     override = os.environ.get("CODEX_BIN")
     if override:
@@ -174,7 +201,7 @@ def find_codex_bin() -> str:
                           for n in ("codex.exe", "codex.cmd", "codex.bat",
                                     "codex")]
         for cand in candidates:
-            if _usable(cand):
+            if _ok(cand):
                 return cand
         # 指向无效路径（填错/已卸载残留）不应硬失败——警告后继续正常发现流程，
         # 否则一个过期的环境变量会把整个定位链路锁死（内测实测踩到）
@@ -190,12 +217,12 @@ def find_codex_bin() -> str:
                 continue
             for name in ("codex.exe", "codex.cmd", "codex.bat"):
                 cand = os.path.join(d, name)
-                if os.path.lexists(cand):
+                if _ok(cand):
                     return cand
         tried.append("PATH")
     else:
         path = shutil.which("codex")
-        if path is not None:
+        if path is not None and _ok(path):
             return path
         tried.append("PATH")
     import glob
@@ -212,7 +239,7 @@ def find_codex_bin() -> str:
             reverse=True,  # 版本号大的优先
         )
     for candidate in candidates:
-        if _usable(candidate):
+        if _ok(candidate):
             return candidate
     tried.extend(candidates)
     # 报错信息直接带上所有找过的位置——远程排障不用来回要日志
@@ -260,6 +287,9 @@ def _windows_codex_candidates() -> list[str]:
     if prefix:
         candidates.append(os.path.join(prefix, "codex.cmd"))
     candidates += [
+        # MSIX/商店版的应用执行别名——商店包目录里的 exe 直接 CreateProcess
+        # 会被拒（WinError 5），必须从别名启动（内测实测）
+        os.path.join(local, "Microsoft", "WindowsApps", "codex.exe"),
         os.path.join(appdata, "npm", "codex.cmd"),              # npm 全局默认
         # Codex 官方独立安装包（OpenAI\Codex 目录，bin 有无子级两种布局都试）
         os.path.join(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
@@ -400,15 +430,25 @@ class AppServerClient:
 
         # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
         # 不显式禁止窗口就可能在每次额度刷新时闪出黑框
-        proc = popen_external(
-            wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-            **hidden_console_kwargs(),
-        )
+        try:
+            proc = popen_external(
+                wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                bufsize=1,
+                **hidden_console_kwargs(),
+            )
+        except OSError as exc:
+            # WinError 5（拒绝访问）常见于商店/MSIX 版 codex 的包内 exe——
+            # 拉黑该路径让下次发现自动切换到执行别名等其他候选
+            invalidate_codex_bin(self.codex_bin)
+            raise AppServerError(
+                f"无法启动 codex（{self.codex_bin}）: {exc}\n"
+                f"若是商店版 codex，请把 CODEX_BIN 设为 "
+                f"%LOCALAPPDATA%\\Microsoft\\WindowsApps\\codex.exe"
+            ) from exc
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:
