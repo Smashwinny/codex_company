@@ -164,7 +164,12 @@ def find_codex_bin() -> str:
     if override:
         if _executable(override):
             return override
-        raise CodexNotFoundError(f"CODEX_BIN 指向的文件不可执行: {override}")
+        # 指向无效路径（填错/已卸载残留）不应硬失败——警告后继续正常发现流程，
+        # 否则一个过期的环境变量会把整个定位链路锁死（内测实测踩到）
+        import logging
+
+        logging.getLogger("codex_quota.app_server").warning(
+            "CODEX_BIN 指向的文件不可执行，忽略并继续自动发现: %s", override)
     path = shutil.which("codex")  # Windows 下 PATHEXT 已覆盖 codex.cmd
     if path is not None:
         return path
@@ -226,7 +231,10 @@ def _windows_codex_candidates() -> list[str]:
         candidates.append(os.path.join(prefix, "codex.cmd"))
     candidates += [
         os.path.join(appdata, "npm", "codex.cmd"),              # npm 全局默认
-        os.path.join(local, "Programs", "codex", "codex.exe"),  # 独立安装包形态
+        # Codex 官方独立安装包（OpenAI\Codex 目录，bin 有无子级两种布局都试）
+        os.path.join(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
+        os.path.join(local, "Programs", "OpenAI", "Codex", "codex.exe"),
+        os.path.join(local, "Programs", "codex", "codex.exe"),
         os.path.join(os.path.expanduser("~"), ".codex", "bin", "codex.exe"),
     ]
     return candidates

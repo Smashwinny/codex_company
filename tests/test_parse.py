@@ -311,3 +311,17 @@ class TestWindowsCodexDiscovery:
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "empty2"))
         with pytest.raises(CodexNotFoundError):
             find_codex_bin()
+
+
+class TestCodexBinOverride:
+    def test_invalid_codex_bin_falls_through(self, monkeypatch, tmp_path):
+        """CODEX_BIN 指向无效路径时不再硬失败，继续走正常发现流程。"""
+        from codex_quota import app_server
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.setenv("CODEX_BIN", str(tmp_path / "nonexistent.cmd"))
+        good = tmp_path / "npm" / "codex.cmd"
+        good.parent.mkdir(parents=True)
+        good.write_text("@echo off\n")
+        monkeypatch.setattr(app_server.shutil, "which", lambda _n: str(good))
+        assert find_codex_bin() == str(good)
