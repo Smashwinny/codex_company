@@ -153,9 +153,12 @@ def _run_hud(args: list[str]) -> int:
         logging.getLogger("codex_quota").warning("阈值配置无效，用默认值: %s", exc)
 
     # 首启向导：环境检测 + 修复引导（先于 web/隧道/通知初始化，勾选结果即生效）
+    from .doctor import has_failures, run_checks
     from .ui.wizard import SetupWizardDialog, should_show_wizard
 
-    if should_show_wizard(settings):
+    # 关键依赖缺失（codex 未装/未登录）时每次启动都弹——向导里有"自动安装"
+    # 等修复入口，只在首启弹的话老用户永远看不到新功能（内测实测踩到）
+    if should_show_wizard(settings) or has_failures(run_checks()):
         SetupWizardDialog(settings, parent=hud).exec()
 
     # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）+ 可选公网隧道
