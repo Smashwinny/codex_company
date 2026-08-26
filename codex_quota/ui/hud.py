@@ -39,7 +39,13 @@ from ..i18n import tr
 from ..model_info import ModelInfo, read_model_info
 from ..notify import ResetWatcher, notify_resets
 from ..settings import Settings
-from ..state import ProviderView, StateStore, ViewState, default_cache_path
+from ..state import (
+    ProviderView,
+    StateStore,
+    ViewState,
+    default_cache_path,
+    key_excluded,
+)
 from .widgets import QuotaBar, abs_level_color, threshold_color
 
 REFRESH_INTERVAL_MS = 60_000   # 活跃期自动刷新
@@ -361,6 +367,12 @@ class FloatingHud(QWidget):
     def _apply_rebuild(self) -> None:
         self._clear_content()
         self._update_model_badge()  # 每次刷新重读 config.toml，改模型即时生效
+        # 显示内容开关（托盘菜单勾选）：隐藏的额度项不渲染
+        hidden = frozenset(self._settings.get("hud_hidden") or [])
+
+        def _hidden(limit, w) -> bool:
+            bucket = limit.limit_name or limit.limit_id
+            return key_excluded(f"{p.name}:{bucket}:{w.label}", hidden)
 
         for p in self._providers:
             st = self._stores[p.name].state
@@ -380,8 +392,10 @@ class FloatingHud(QWidget):
             now_ts = snap.fetched_at
             main = snap.primary_limit
             if main is not None:
-                self._add_window_row(main.primary, now_ts)
-                if main.secondary is not None and not self._compact:
+                if not _hidden(main, main.primary):
+                    self._add_window_row(main.primary, now_ts)
+                if (main.secondary is not None and not self._compact
+                        and not _hidden(main, main.secondary)):
                     self._add_window_row(main.secondary, now_ts)
                 if main.credits is not None and main.credits.has_credits and not self._compact:
                     c = main.credits
@@ -391,12 +405,15 @@ class FloatingHud(QWidget):
                     self._content.addWidget(lbl)
             if not self._compact:
                 for extra in snap.limits[1:]:
+                    wins = [w for w in (extra.primary, extra.secondary)
+                            if w is not None and not _hidden(extra, w)]
+                    if not wins:
+                        continue  # 整桶隐藏：分隔线也不显示
                     sep = QLabel(f"  ── {extra.limit_name or extra.limit_id} ──")
                     sep.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
                     self._content.addWidget(sep)
-                    self._add_window_row(extra.primary, now_ts)
-                    if extra.secondary is not None:
-                        self._add_window_row(extra.secondary, now_ts)
+                    for w in wins:
+                        self._add_window_row(w, now_ts)
             self._add_fresh_line(st)  # 每个分区自己的更新时间
 
         self._update_footer()

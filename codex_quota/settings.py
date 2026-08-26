@@ -33,6 +33,7 @@ DEFAULTS: dict[str, Any] = {
     "color_crit_threshold": 10,  # 红线：剩余量 ≤ 此百分比显示红色
     "tray_color_excludes": [],   # 不参与托盘取色的额度桶 ["provider:桶名", ...]
     "notify_excludes": [],       # 不发送重置推送的额度桶 ["provider:桶名", ...]
+    "hud_hidden": [],            # 悬浮窗不显示的额度项 ["provider:桶:窗口", ...]
 }
 
 

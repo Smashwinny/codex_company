@@ -96,6 +96,8 @@ _EN: dict[str, str] = {
     # 取色来源
     "主模型显示": "Primary model display",
     "重置提醒": "Reset alerts",
+    "显示内容": "Visible items",
+    "勾选的额度项显示在悬浮窗里": "Checked items are shown in the widget",
     "勾选的额度桶回满 100% 时推送手机通知":
         "Checked buckets push to phone when refilled to 100%",
     "（暂无数据）": "(no data yet)",

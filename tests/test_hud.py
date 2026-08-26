@@ -55,6 +55,24 @@ class TestHudSmoke:
         assert "更新于" in hud._fresh_labels[0][0].text()
         assert hud._footer.isHidden()  # 有数据时全局页脚隐藏
 
+    def test_hidden_windows_not_rendered(self, hud):
+        """显示内容开关：hud_hidden 里的窗口不渲染，整桶隐藏连分隔线都没有。"""
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
+        assert len(hud._rows) == 2  # 主限额 + Spark
+
+        # 隐藏 Spark 桶（桶级前缀）：只剩主限额一行
+        hud._settings.set("hud_hidden", ["codex:GPT-5.3-Codex-Spark"])
+        hud._apply()
+        assert len(hud._rows) == 1
+        assert "Spark" not in "".join(
+            h.text() for h in hud._section_headers)  # 桶分隔线也没了
+
+        # 恢复
+        hud._settings.set("hud_hidden", [])
+        hud._apply()
+        assert len(hud._rows) == 2
+
     def test_error_without_history(self, hud):
         hud._stores["codex"].on_error("app-server 响应超时（8 秒）")
         hud._apply()

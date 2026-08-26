@@ -186,6 +186,9 @@ class QuotaTray(QObject):
         self._notify_checks = ChecklistMenu(
             tr("重置提醒"), tr("勾选的额度桶回满 100% 时推送手机通知"),
             self, self._toggle_notify_bucket)
+        self._hud_checks = ChecklistMenu(
+            tr("显示内容"), tr("勾选的额度项显示在悬浮窗里"),
+            self, self._toggle_hud_visible)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
@@ -202,6 +205,7 @@ class QuotaTray(QObject):
         self._menu.addMenu(self._thresh_menu)
         self._menu.addMenu(self._color_checks.menu)
         self._menu.addMenu(self._notify_checks.menu)
+        self._menu.addMenu(self._hud_checks.menu)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -230,6 +234,8 @@ class QuotaTray(QObject):
         self._color_checks.sync(items, set(excludes))
         self._notify_checks.sync(
             items, set(self._hud._settings.get("notify_excludes") or []))
+        self._hud_checks.sync(
+            items, set(self._hud._settings.get("hud_hidden") or []))
 
         lines = summary_lines(views)
         tip = f"{tr('⚡ 额度监控')} v{__version__}\n" + "\n".join(lines)
@@ -282,6 +288,13 @@ class QuotaTray(QObject):
         s.set("notify_excludes",
               sorted(toggle_window(s.get("notify_excludes") or [], key, all_keys)))
         # 无视觉变化，不用刷图标；下次检测回满时即按新集合生效
+
+    def _toggle_hud_visible(self, key: str) -> None:
+        s = self._hud._settings
+        all_keys = [k for k, _ in window_keys(self._hud._current_views())]
+        s.set("hud_hidden",
+              sorted(toggle_window(s.get("hud_hidden") or [], key, all_keys)))
+        self._hud._apply()  # 立即重渲染
 
     def _sync_toggle_text(self) -> None:
         self.action_toggle.setText(tr("隐藏悬浮窗") if self._hud.isVisible()
