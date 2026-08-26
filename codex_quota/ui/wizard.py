@@ -128,12 +128,79 @@ class SetupWizardDialog(QDialog):
         text.setTextFormat(Qt.TextFormat.RichText)
         text.setWordWrap(True)
         lay.addWidget(text, stretch=1)
+        # codex CLI 缺失：给"自动安装"（免 Node，下载官方独立二进制）按钮
+        if check.key == "codex_bin" and check.status == FAIL:
+            install_btn = QPushButton(tr("自动安装"))
+            install_btn.setToolTip(tr("从 GitHub 下载官方独立二进制（免装 Node.js）"))
+            install_btn.clicked.connect(
+                lambda _=False, b=install_btn: self._install_codex(b))
+            lay.addWidget(install_btn)
+        # codex 已装未登录：给"去登录"按钮（可见终端里跑 codex login）
+        if check.key == "codex_login" and check.status == FAIL:
+            login_btn = QPushButton(tr("去登录"))
+            login_btn.setToolTip(tr("打开终端窗口运行 codex login（浏览器授权）"))
+            login_btn.clicked.connect(
+                lambda _=False, b=login_btn: self._login_codex(b))
+            lay.addWidget(login_btn)
         if check.fix_command:
             btn = QPushButton(tr("复制命令"))
             btn.setToolTip(check.fix_command)
             btn.clicked.connect(lambda _=False, c=check.fix_command, b=btn: self._copy(c, b))
             lay.addWidget(btn)
         return row
+
+    def _install_codex(self, btn: QPushButton) -> None:
+        """后台线程下载安装 codex CLI，完成后重新检测。"""
+        import threading
+
+        from ..bootstrap import BootstrapError, install_codex_cli
+
+        btn.setEnabled(False)
+        btn.setText(tr("下载中…"))
+
+        def _work():
+            try:
+                path = install_codex_cli()
+                self._after_install(path, None)
+            except BootstrapError as exc:
+                self._after_install(None, str(exc))
+
+        def _safe_work():
+            try:
+                _work()
+            except Exception as exc:  # 兜底，防线程静默死
+                self._after_install(None, str(exc))
+
+        threading.Thread(target=_safe_work, daemon=True).start()
+
+    def _after_install(self, path, error) -> None:
+        from PyQt6.QtCore import QTimer
+
+        def _apply():
+            from ..app_server import reset_codex_bin_cache
+
+            reset_codex_bin_cache()  # 装好了，让发现逻辑重新找
+            self._reload_checks()
+            if error:
+                from PyQt6.QtWidgets import QMessageBox
+
+                QMessageBox.warning(self, tr("自动安装失败"), str(error))
+
+        QTimer.singleShot(0, _apply)  # 回主线程操作 UI
+
+    def _login_codex(self, btn: QPushButton) -> None:
+        from ..app_server import find_codex_bin
+        from ..bootstrap import open_login_terminal
+
+        try:
+            path = find_codex_bin()
+        except Exception:
+            btn.setText(tr("先安装"))
+            return
+        if open_login_terminal(path):
+            btn.setText(tr("已打开终端"))
+        else:
+            btn.setText(tr("请手动运行 codex login"))
 
     @staticmethod
     def _copy(command: str, btn: QPushButton) -> None:

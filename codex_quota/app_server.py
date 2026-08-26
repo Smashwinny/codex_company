@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .bootstrap import managed_codex_path
+
 DEFAULT_TIMEOUT = 15.0  # 秒；超时即 kill 子进程（云端查询实测 2-8s，8s 太紧）
 from . import __version__
 
@@ -180,6 +182,12 @@ def invalidate_codex_bin(path: str) -> None:
     _blacklisted_bins.add(path)
 
 
+def reset_codex_bin_cache() -> None:
+    """刚装好/卸载 codex 时调用：清缓存触发重新发现（黑名单保留）。"""
+    global _resolved_bin
+    _resolved_bin = None
+
+
 def _discover_codex_bin() -> str:
     is_win = sys.platform == "win32"
 
@@ -246,7 +254,8 @@ def _discover_codex_bin() -> str:
             tried.append(f"npm prefix: {prefix}")
         candidates = _windows_codex_candidates()
     else:
-        candidates = sorted(
+        candidates = [managed_codex_path()]  # 我们托管安装的（免 Node）
+        candidates += sorted(
             glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions",
                                    "node", "*", "bin", "codex")),
             reverse=True,  # 版本号大的优先
@@ -333,6 +342,7 @@ def _windows_codex_candidates() -> list[str]:
         os.path.join(local, "Programs", "OpenAI", "Codex", "codex.exe"),
         os.path.join(local, "Programs", "codex", "codex.exe"),
         os.path.join(os.path.expanduser("~"), ".codex", "bin", "codex.exe"),
+        managed_codex_path(),  # 我们托管安装的（免 Node，向导自动装）
     ]
     return candidates
 

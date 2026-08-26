@@ -20,6 +20,7 @@ from collections import deque
 from typing import Callable, Optional
 
 from .app_server import QuotaSnapshot
+from .net import https_context
 from .state import key_excluded
 
 RESET_THRESHOLD = 99.5  # 剩余量跨过此线视为"重置回满"
@@ -93,7 +94,7 @@ class NtfyNotifier:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=https_context()) as resp:
                 return resp.status == 200
         except Exception:
             return False
@@ -195,7 +196,7 @@ class NtfyCommandListener:
             try:
                 req = urllib.request.Request(
                     f"{self.server}/{self.topic}/json?since={self._since}")
-                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                with urllib.request.urlopen(req, timeout=self._timeout, context=https_context()) as resp:
                     self._resp = resp
                     backoff = 2.0  # 连上即重置退避
                     failed = False
