@@ -150,7 +150,7 @@ class SetupWizardDialog(QDialog):
         return row
 
     def _install_codex(self, btn: QPushButton) -> None:
-        """后台线程下载安装 codex CLI，完成后重新检测。"""
+        """后台线程下载安装 codex CLI，完成后自动弹登录终端并轮询登录状态。"""
         import threading
 
         from ..bootstrap import BootstrapError, install_codex_cli
@@ -158,16 +158,12 @@ class SetupWizardDialog(QDialog):
         btn.setEnabled(False)
         btn.setText(tr("下载中…"))
 
-        def _work():
+        def _safe_work():
             try:
                 path = install_codex_cli()
                 self._after_install(path, None)
             except BootstrapError as exc:
                 self._after_install(None, str(exc))
-
-        def _safe_work():
-            try:
-                _work()
             except Exception as exc:  # 兜底，防线程静默死
                 self._after_install(None, str(exc))
 
@@ -185,8 +181,23 @@ class SetupWizardDialog(QDialog):
                 from PyQt6.QtWidgets import QMessageBox
 
                 QMessageBox.warning(self, tr("自动安装失败"), str(error))
+            elif path:
+                # 一键链路：装完自动弹登录终端，不用再找按钮
+                self._start_login_flow()
 
         QTimer.singleShot(0, _apply)  # 回主线程操作 UI
+
+    def _start_login_flow(self) -> None:
+        """打开 codex login 终端 + 轮询 auth.json：授权完成自动刷新检测结果。"""
+        from ..app_server import find_codex_bin
+        from ..bootstrap import open_login_terminal
+
+        try:
+            path = find_codex_bin()
+        except Exception:
+            return
+        if open_login_terminal(path):
+            self._poll_login_done()
 
     def _login_codex(self, btn: QPushButton) -> None:
         from ..app_server import find_codex_bin
@@ -199,8 +210,30 @@ class SetupWizardDialog(QDialog):
             return
         if open_login_terminal(path):
             btn.setText(tr("已打开终端"))
+            self._poll_login_done()
         else:
             btn.setText(tr("请手动运行 codex login"))
+
+    def _poll_login_done(self) -> None:
+        """每 2s 查 auth.json，登录成功自动重新检测；最多等 3 分钟。"""
+        from PyQt6.QtCore import QTimer
+
+        from ..app_server import is_logged_in
+
+        self._login_wait_elapsed = 0
+        timer = QTimer(self)
+        timer.setInterval(2000)
+
+        def _poll():
+            self._login_wait_elapsed += 2
+            if is_logged_in():
+                timer.stop()
+                self._reload_checks()
+            elif self._login_wait_elapsed >= 180 or not self.isVisible():
+                timer.stop()
+
+        timer.timeout.connect(_poll)
+        timer.start()
 
     @staticmethod
     def _copy(command: str, btn: QPushButton) -> None:
