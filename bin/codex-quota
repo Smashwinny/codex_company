@@ -17,6 +17,29 @@ fi
 LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/codex-quota"
 mkdir -p "$LOG_DIR"
 
+# stop / restart：应用卡死（僵尸实例不响应）时的逃生门——优雅 SIGTERM，
+# 超时强杀，并清掉单实例 socket/锁残留
+if [ "${1:-}" = "stop" ] || [ "${1:-}" = "restart" ]; then
+    if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
+        echo "正在停止 codex-quota..."
+        pkill -f "[b]in/python.*-m codex_quota" || true
+        for _ in $(seq 1 45); do  # 优雅退出需回收子进程（隧道/服务器），最多等 45s
+            pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1 || break
+            sleep 1
+        done
+        if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
+            pkill -9 -f "[b]in/python.*-m codex_quota" || true
+            sleep 1
+        fi
+        rm -f "/tmp/codex-quota-$(id -u)" "$LOG_DIR/codex-quota-$(id -u).lock"
+        echo "已停止"
+    else
+        echo "codex-quota 未在运行"
+    fi
+    [ "${1:-}" = "stop" ] && exit 0
+    echo "正在重启..."
+fi
+
 if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
     echo "codex-quota 已在运行"
     exit 0

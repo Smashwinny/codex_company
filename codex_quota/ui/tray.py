@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -219,8 +219,41 @@ class QuotaTray(QObject):
         self.update_state(hud._current_views())
         self._sync_toggle_text()
 
+        # 托盘丢失看门狗：GNOME Shell 重启/崩溃后 SNI 托盘会消失且 Qt 不一定
+        # 重新注册——届时悬浮窗若处于隐藏态，用户将彻底失去控制入口（实测踩到）。
+        # 丢失即显示悬浮窗保底；恢复时重建图标。
+        self._tray_visible = True
+        self._tray_watchdog = QTimer(self)
+        self._tray_watchdog.setInterval(30_000)
+        self._tray_watchdog.timeout.connect(self._check_tray_alive)
+        self._tray_watchdog.start()
+
     def show(self) -> None:
         self.tray.show()
+
+    # ---------- 托盘存活 ----------
+
+    def _check_tray_alive(self) -> None:
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            if not self._tray_visible:
+                self._rebuild_tray()
+            return
+        if self._tray_visible:  # 只在"曾经有、现在没了"的跳变时动作一次
+            self._tray_visible = False
+            logging.getLogger("codex_quota.tray").warning(
+                "系统托盘消失（Shell 重启？），显示悬浮窗保底可控")
+            self._hud.show_and_activate()
+
+    def _rebuild_tray(self) -> None:
+        old = self.tray
+        self.tray = QSystemTrayIcon(make_dot_icon(COLOR_UNKNOWN), parent=self)
+        self.tray.setContextMenu(self._menu)
+        self.tray.activated.connect(self._on_activated)
+        self.tray.show()
+        self.update_state(self._hud._current_views())
+        old.deleteLater()
+        self._tray_visible = True
+        logging.getLogger("codex_quota.tray").info("系统托盘恢复，图标已重建")
 
     # ---------- 状态更新 ----------
 
