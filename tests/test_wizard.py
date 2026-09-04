@@ -37,7 +37,16 @@ class TestShouldShow:
 
     def test_after_done(self, settings):
         settings.set("wizard_done", True)
-        assert should_show_wizard(settings) is False
+        assert should_show_wizard(settings, []) is False
+
+    def test_failures_show_again_unless_customer_snoozed(self, settings):
+        from codex_quota.doctor import CheckItem, FAIL
+
+        settings.set("wizard_done", True)
+        failed = [CheckItem("codex_bin", "Codex CLI", True, FAIL, "missing")]
+        assert should_show_wizard(settings, failed) is True
+        settings.set("codex_setup_snoozed", True)
+        assert should_show_wizard(settings, failed) is False
 
 
 class TestWizard:
@@ -67,6 +76,7 @@ class TestWizard:
         QTest.mouseClick(wizard._skip_btn, Qt.MouseButton.LeftButton)
         fresh = Settings(path=settings._path)
         assert fresh.get("wizard_done") is True
+        assert fresh.get("codex_setup_snoozed") is True
         assert fresh.get("web_enabled") is True  # 未改动
 
     def test_copy_button(self, wizard):
@@ -79,6 +89,8 @@ class TestWizard:
     def test_recheck_reloads(self, wizard, monkeypatch):
         # 模拟用户完成登录后再点"全部重新检测" → ❌ 应变 ✅
         monkeypatch.setattr("codex_quota.app_server.is_logged_in", lambda: True)
+        monkeypatch.setattr("codex_quota.doctor._default_login_status",
+                            lambda _path: True)
         recheck = next(b for b in wizard.findChildren(QPushButton)
                        if "重新检测" in b.text())
         QTest.mouseClick(recheck, Qt.MouseButton.LeftButton)
@@ -88,3 +100,24 @@ class TestWizard:
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         assert not any(b.toolTip() == "codex login"
                        for b in wizard.findChildren(QPushButton))
+
+    def test_install_result_signal_returns_to_ui_thread(self, wizard,
+                                                        monkeypatch, qapp):
+        import threading
+
+        called = []
+        monkeypatch.setattr(wizard, "_after_install",
+                            lambda path, error: called.append((path, error)))
+        # 重连到可观测 slot；从 Python 工作线程 emit，Qt 主线程必须收到。
+        wizard._install_bridge.finished.disconnect()
+        wizard._install_bridge.finished.connect(wizard._after_install)
+        t = threading.Thread(
+            target=lambda: wizard._install_bridge.finished.emit("codex.exe", None))
+        t.start()
+        t.join()
+        for _ in range(20):
+            qapp.processEvents()
+            if called:
+                break
+            QTest.qWait(10)
+        assert called == [("codex.exe", None)]

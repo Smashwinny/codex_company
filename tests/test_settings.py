@@ -19,6 +19,7 @@ class TestSettings:
         assert s.get("opacity") == 1.0
         assert s.get("compact") is False
         assert s.get("pos") is None
+        assert s.get("codex_setup_snoozed") is False
 
     def test_round_trip(self, tmp_path):
         s = self.make(tmp_path)

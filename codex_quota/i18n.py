@@ -114,6 +114,9 @@ _EN: dict[str, str] = {
     "已复制": "Copied",
     "完成并启动": "Finish & Start",
     "跳过": "Skip",
+    "暂不配置 Codex": "Not now for Codex",
+    "仍可使用其他额度来源，之后可从托盘重新打开":
+        "Other providers remain available; reopen setup later from the tray",
     "手机访问（局域网 + 公网隧道）": "Phone access (LAN + public tunnel)",
     "额度重置推送（ntfy）": "Quota reset push (ntfy)",
     "初始设置 / 环境自检": "Setup / Environment check",
@@ -152,6 +155,7 @@ _EN: dict[str, str] = {
     "已登录": "Logged in",
     "未安装": "Not installed",
     "未登录": "Not logged in",
+    "未登录或登录已失效": "Not logged in or login expired",
     "Codex 登录": "Codex login",
     "未安装（可选，仅不显示 Kimi 分区）": "Not installed (optional, Kimi section hidden)",
     "未找到（已装过就设 CODEX_BIN 指向 codex.cmd 的完整路径）":

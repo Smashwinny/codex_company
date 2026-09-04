@@ -477,29 +477,46 @@ class AppServerClient:
 
         # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
         # 不显式禁止窗口就可能在每次额度刷新时闪出黑框
-        try:
-            proc = popen_external(
-                wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-                bufsize=1,
-                **hidden_console_kwargs(),
-            )
-        except OSError as exc:
+        last_exc = None
+        proc = None
+        attempted: list[str] = []
+        while True:
+            attempted.append(self.codex_bin)
+            try:
+                proc = popen_external(
+                    wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                    **hidden_console_kwargs(),
+                )
+                break
+            except OSError as exc:
+                last_exc = exc
+                if sys.platform != "win32":
+                    break
+                invalidate_codex_bin(self.codex_bin)
+                try:
+                    next_bin = find_codex_bin()
+                except CodexNotFoundError:
+                    break
+                if next_bin in attempted:
+                    break
+                self.codex_bin = next_bin
+
+        if proc is None:
             # WinError 5（拒绝访问）常见于商店/MSIX 版 Codex 桌面应用的包内
             # exe——它不是 CLI，被容器锁住无法由外部进程启动（内测实测）。
             # 黑名单只在 Windows 生效：POSIX 的 spawn 失败多是瞬时性的
             # （资源压力等），拉黑唯一正确的 codex 路径反而是回退
-            if sys.platform == "win32":
-                invalidate_codex_bin(self.codex_bin)
             raise AppServerError(
-                f"无法启动 codex（{self.codex_bin}）: {exc}\n"
+                f"无法启动 codex（已尝试: {'；'.join(attempted)}）: {last_exc}\n"
                 f"提示：如果装的是微软商店的 Codex 桌面应用，它和 Codex CLI "
-                f"不是一回事——请安装 Node.js 后运行 npm i -g @openai/codex，"
-                f"再 codex login"
-            ) from exc
+                f"不是一回事——请在初始设置中选择‘自动安装’，"
+                f"或设置 CODEX_BIN 指向真实的 codex.exe/codex.cmd"
+            ) from last_exc
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:

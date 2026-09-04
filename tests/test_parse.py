@@ -414,3 +414,43 @@ class TestCodexBinBlacklist:
         first = find_codex_bin()
         monkeypatch.setattr("shutil.which", lambda _n: None)
         assert find_codex_bin() == first  # 缓存，不重新发现
+
+    def test_read_retries_next_candidate_in_same_request(self, monkeypatch):
+        """WindowsApps shim spawn 失败后，本次查询立即改试真 CLI。"""
+        import io
+
+        from codex_quota import app_server, proc
+        from codex_quota.app_server import AppServerClient
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.setattr(proc.sys, "platform", "win32")
+        monkeypatch.setattr(proc, "IS_WINDOWS", True)
+        candidates = iter([r"C:\npm\codex.cmd"])
+        monkeypatch.setattr(app_server, "find_codex_bin", lambda: next(candidates))
+
+        class FakeProc:
+            stdin = io.StringIO()
+            stdout = []
+
+            @staticmethod
+            def poll():
+                return 0
+
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                raise PermissionError(5, "Access is denied")
+            return FakeProc()
+
+        monkeypatch.setattr(proc, "popen_external", fake_popen)
+        client = AppServerClient(codex_bin=r"C:\WindowsApps\codex.exe")
+        monkeypatch.setattr(client, "_await_response", lambda *_a, **_k: {
+            "result": {"rateLimits": {"primary": {}}}
+        })
+
+        snapshot = client.read_rate_limits()
+        assert snapshot.provider == "codex"
+        assert len(calls) == 2
+        assert calls[1][:2] == ["cmd.exe", "/c"]
