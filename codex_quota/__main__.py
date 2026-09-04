@@ -140,8 +140,7 @@ def _run_hud(args: list[str]) -> int:
     hud = FloatingHud(providers)
     hud.restore_position()
     settings = hud._settings
-    single.set_raise_callback(
-        lambda: (hud.show(), hud.raise_(), hud.activateWindow()))
+    single.set_raise_callback(hud.show_and_activate)
 
     # 告警阈值（黄线/红线）：settings.json 或托盘菜单"告警阈值"可调
     from .ui.widgets import set_thresholds
@@ -256,7 +255,7 @@ def _run_hud(args: list[str]) -> int:
         # GNOME 默认无托盘（需 AppIndicator 扩展）：关窗即退出
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
-    hud.show()
+    hud.show_and_activate()
 
     # 首次生成 ntfy 主题时自动弹一次订阅指引：订阅关系刚建立，
     # 正是用户最需要"手机上要做什么"的时刻；之后从托盘菜单再开

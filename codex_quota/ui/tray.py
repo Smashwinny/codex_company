@@ -304,8 +304,7 @@ class QuotaTray(QObject):
         if self._hud.isVisible():
             self._hud.hide()
         else:
-            self._hud.show()
-            self._hud.raise_()
+            self._hud.show_and_activate()
         self._sync_toggle_text()
 
     def _toggle_autostart(self, checked: bool) -> None:

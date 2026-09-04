@@ -17,6 +17,10 @@ from __future__ import annotations
 import datetime as dt
 import html
 import logging
+import os
+import shutil
+import subprocess
+import sys
 import time
 from typing import Optional
 
@@ -66,6 +70,18 @@ ERROR_MAX_CHARS = 120  # 分区内联错误最大字符数（完整内容放 too
 def _short(text: object, limit: int) -> str:
     s = str(text)
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _active_workspace(wmctrl_output: str) -> Optional[int]:
+    """Parse the current EWMH desktop from ``wmctrl -d`` output."""
+    for line in wmctrl_output.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == "*":
+            try:
+                return int(fields[0])
+            except ValueError:
+                return None
+    return None
 
 # provider 分区标识色
 PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7"}
@@ -510,6 +526,47 @@ class FloatingHud(QWidget):
         if (isinstance(pos, list) and len(pos) == 2
                 and all(isinstance(v, int) for v in pos)):
             self.move(pos[0], pos[1])
+
+    def show_and_activate(self) -> None:
+        """Restore a hidden HUD and make it reachable on the current desktop.
+
+        ``show()/raise_()`` alone does not move a Qt.Tool window from another
+        GNOME workspace.  That leaves a live process and a viewable X11 window
+        that the user cannot reach from the taskbar.  On Linux/X11, use the
+        optional wmctrl utility to move it to the active workspace; other
+        platforms retain the normal Qt behavior.
+        """
+        self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        QTimer.singleShot(0, self._move_to_active_workspace)
+
+    def _move_to_active_workspace(self) -> None:
+        if (not sys.platform.startswith("linux")
+                or not os.environ.get("DISPLAY")):
+            return
+        wmctrl = shutil.which("wmctrl")
+        if wmctrl is None:
+            return
+        try:
+            desktops = subprocess.run(
+                [wmctrl, "-d"], check=False, capture_output=True,
+                text=True, timeout=2)
+            active = _active_workspace(desktops.stdout)
+            if active is None:
+                return
+            window_id = hex(int(self.winId()))
+            subprocess.run(
+                [wmctrl, "-ir", window_id, "-t", str(active)],
+                check=False, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=2)
+            subprocess.run(
+                [wmctrl, "-ia", window_id], check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=2)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("恢复悬浮窗到当前工作区失败: %s", exc)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)

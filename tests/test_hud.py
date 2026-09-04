@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 
 from codex_quota.app_server import parse_rate_limits_response
 from codex_quota.state import StateStore
-from codex_quota.ui.hud import FloatingHud, _countdown_text
+from codex_quota.ui.hud import FloatingHud, _active_workspace, _countdown_text
 from codex_quota.ui.widgets import QuotaBar, threshold_color
 from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
@@ -137,6 +137,22 @@ class TestHudSmoke:
 
         assert _short("abc", 10) == "abc"
         assert _short("x" * 200, 120) == "x" * 119 + "…"
+
+    def test_active_workspace_parser(self):
+        output = "0  - DG: 4480x1440\n1  * DG: 4480x1440\n"
+        assert _active_workspace(output) == 1
+        assert _active_workspace("0  - DG: 1x1\n") is None
+
+    def test_show_and_activate_restores_hidden_window(self, hud, monkeypatch):
+        moved = []
+        monkeypatch.setattr(hud, "_move_to_active_workspace",
+                            lambda: moved.append(True))
+        hud.hide()
+        hud.show_and_activate()
+        QApplication.processEvents()
+        assert hud.isVisible()
+        assert not hud.isMinimized()
+        assert moved == [True]
 
 
 class TestWidgets:
