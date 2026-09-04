@@ -1,12 +1,13 @@
 """Kimi 用量 provider：`kimi web` 本地服务器 + /api/v1/oauth/usage。
 
-交互方式（2026-08-12 实测，kimi-code 0.35.0）：
-- spawn `kimi web --port <随机空闲端口>`，从 stdout 解析 "Token: xxx"
-  （token 与本地凭证绑定，多次启动相同；不自动打开浏览器）
+交互方式（2026-09-01）：
+- 不启动、不停止、不重启 Kimi Web；服务生命周期由 stupid 项目的
+  `kimi-code-web.service` 唯一负责。
+- 扫描 `~/.kimi-code/server/instances/*.json`，优先复用固定端口 58627
+  且心跳新鲜的实例。
+- 每次请求读取 `~/.kimi-code/server.token`；HTTP 401 时重新读取并重试一次。
 - GET /api/v1/oauth/usage（Authorization: Bearer <token>）→ 用量 JSON
 - GET /api/v1/auth → default_model（展示用，失败可容忍）
-- 服务器启动约 3–5s，保活整个应用周期；close() 杀整个进程组
-  （服务器进程名为 kimi-code，可能是子进程，必须 killpg）
 
 响应映射：summary(周窗)→primary，limits[0](5h)→secondary；
 used/limit*100 → used_percent；ISO8601 reset_at → Unix 秒。
@@ -17,25 +18,20 @@ from __future__ import annotations
 import json
 import logging
 import os
-import queue
-import re
 import shutil
-import socket
-import subprocess
-import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
 from typing import Any, Optional
 
-from .. import proc
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
 
 logger = logging.getLogger("codex_quota.kimi")
 
-TOKEN_RE = re.compile(r"Token:\s+(\S+)")
 UNIT_MINUTES = {"minute": 1, "hour": 60, "day": 1440, "week": 10080}
+INSTANCE_MAX_AGE_MS = 120_000
+DEFAULT_OWNER_PORT = 58627
 
 
 class KimiError(Exception):
@@ -125,77 +121,70 @@ class KimiProvider:
     def __init__(self, kimi_bin: Optional[str] = None, *,
                  base_url: Optional[str] = None, token: Optional[str] = None,
                  startup_timeout: float = 20.0, request_timeout: float = 8.0,
-                 restart_cooldown: float = 300.0):
+                 restart_cooldown: float = 300.0,
+                 instance_dir: Optional[str] = None,
+                 token_path: Optional[str] = None,
+                 preferred_port: Optional[int] = None):
+        # kimi_bin/startup_timeout/restart_cooldown 仅为旧调用兼容，不再用于拉起进程。
         self._bin = kimi_bin
-        self._base_url = base_url      # 注入则跳过进程管理（测试/外部服务器）
+        self._base_url = base_url
         self._token = token
-        self._startup_timeout = startup_timeout
         self._request_timeout = request_timeout
-        self._restart_cooldown = restart_cooldown
-        self._last_restart = 0.0
-        self._proc: Optional[subprocess.Popen] = None
+        root = os.path.expanduser("~/.kimi-code")
+        self._instance_dir = instance_dir or os.path.join(root, "server", "instances")
+        self._token_path = token_path or os.path.join(root, "server.token")
+        self._preferred_port = preferred_port or int(os.environ.get("KIMI_WEB_PORT", DEFAULT_OWNER_PORT))
+        self._injected = base_url is not None and token is not None
 
-    # ---------- 进程管理 ----------
+    # ---------- 只读实例发现 ----------
 
-    def _spawn_args(self, port: int) -> list[str]:
-        # --no-open：禁止服务器启动时自动打开浏览器标签页
-        return [self._bin, "web", "--port", str(port), "--no-open"]
+    def _read_token(self) -> str:
+        try:
+            with open(self._token_path, "r", encoding="utf-8") as f:
+                token = f.read().strip()
+        except OSError as exc:
+            raise KimiError("未找到 Kimi Web token 文件；不会自动 login 或启动服务") from exc
+        if not token:
+            raise KimiError("Kimi Web token 文件为空")
+        return token
+
+    def _discover_server(self, *, force: bool = False) -> None:
+        if self._injected and not force:
+            return
+        now_ms = time.time() * 1000
+        candidates = []
+        try:
+            names = os.listdir(self._instance_dir)
+        except OSError as exc:
+            raise KimiError("未发现 Kimi Web 实例；请检查 stupid 的 kimi-code-web.service") from exc
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(self._instance_dir, name), "r", encoding="utf-8") as f:
+                    item = json.load(f)
+                if (item.get("port") and item.get("pid")
+                        and now_ms - float(item.get("heartbeat_at", 0)) <= INSTANCE_MAX_AGE_MS):
+                    candidates.append(item)
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+        if not candidates:
+            raise KimiError("没有心跳新鲜的 Kimi Web 实例；不会自动启动新实例")
+        candidates.sort(key=lambda x: float(x.get("heartbeat_at", 0)), reverse=True)
+        selected = next((x for x in candidates if int(x["port"]) == self._preferred_port), candidates[0])
+        host = selected.get("host") or "127.0.0.1"
+        self._base_url = f"http://{host}:{int(selected['port'])}"
+        self._token = self._read_token()
+        logger.info("复用 Kimi Web（端口 %s，PID %s）", selected["port"], selected["pid"])
 
     def _ensure_server(self) -> None:
         if self._base_url and self._token:
-            return  # 注入模式
-        if self._proc is not None and self._proc.poll() is None and self._token:
-            return  # 已保活
-
-        if self._bin is None:
-            self._bin = find_kimi_bin()
-        if self._bin is None:
-            raise KimiError("未找到 kimi 可执行文件（可设置 KIMI_BIN）")
-
-        # 随机空闲端口
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
-
-        self._proc = proc.spawn_detached(
-            self._spawn_args(port),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-        proc.record_child(self._proc.pid, "kimi-web")
-        lines: queue.Queue[str] = queue.Queue()
-
-        def _pump() -> None:
-            assert self._proc is not None and self._proc.stdout is not None
-            for line in self._proc.stdout:
-                lines.put(line)
-
-        threading.Thread(target=_pump, daemon=True).start()
-
-        deadline = time.monotonic() + self._startup_timeout
-        while time.monotonic() < deadline:
-            if self._proc.poll() is not None:
-                break
-            try:
-                line = lines.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            m = TOKEN_RE.search(line)
-            if m:
-                self._token = m.group(1)
-                self._base_url = f"http://127.0.0.1:{port}"
-                logger.info("kimi web 已启动（端口 %s）", port)
-                return
-        self.close()
-        raise KimiError("kimi web 启动超时或未输出 Token")
+            return
+        self._discover_server()
 
     def close(self) -> None:
-        proc_, self._proc = self._proc, None
-        if proc_ is not None:
-            proc.kill_tree(proc_, timeout=2)
-            if proc_.poll() is not None:
-                proc.forget_child(proc_.pid)
+        """客户端不拥有 Kimi Web，退出时绝不停止共享服务。"""
+        return None
 
     # ---------- 查询 ----------
 
@@ -208,32 +197,29 @@ class KimiProvider:
         with urllib.request.urlopen(req, timeout=self._request_timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
-    def _restart_server(self) -> None:
-        """重启保活服务器。带冷却：频繁重启会反复拉进程，必须限流。"""
-        now = time.monotonic()
-        if now - self._last_restart < self._restart_cooldown:
-            logger.info("kimi web 重启冷却中，跳过本次重启")
-            raise KimiError("kimi web 无响应（重启冷却中，稍后自动恢复）")
-        self._last_restart = now
-        logger.warning("kimi web 连接失败，重启服务器")
-        self.close()
-        self._base_url = self._token = None
-        self._ensure_server()
-
     def fetch(self) -> QuotaSnapshot:
         self._ensure_server()
         try:
             usage = self._get_json("/api/v1/oauth/usage")
         except urllib.error.HTTPError as exc:
-            # HTTP 层错误（401/404…）：连接是通的，重启无意义
-            raise KimiError(f"kimi 接口返回 HTTP {exc.code}") from exc
+            if exc.code == 401 and not self._injected:
+                self._token = self._read_token()
+                try:
+                    usage = self._get_json("/api/v1/oauth/usage")
+                except urllib.error.HTTPError as retry_exc:
+                    raise KimiError(f"kimi 接口返回 HTTP {retry_exc.code}") from retry_exc
+            else:
+                raise KimiError(f"kimi 接口返回 HTTP {exc.code}") from exc
         except (urllib.error.URLError, OSError):
-            # 连接级失败：服务器可能已死，重启一次再试（冷却限流）
-            self._restart_server()
+            # 仅重新发现 owner 实例；绝不自行重启或 login。
+            if self._injected:
+                raise KimiError("kimi web 无响应")
+            self._base_url = self._token = None
+            self._discover_server(force=True)
             try:
                 usage = self._get_json("/api/v1/oauth/usage")
             except Exception as exc:
-                raise KimiError("kimi web 重启后仍无响应") from exc
+                raise KimiError("重新发现 Kimi Web 后仍无响应") from exc
 
         model = None
         try:

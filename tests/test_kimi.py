@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 import os
 import stat
-import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
@@ -171,75 +171,41 @@ class TestKimiHttpFetch:
         assert snap.primary_limit.primary.used_percent == pytest.approx(13.0)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 进程组/执行位语义，Windows 分支由 test_proc 等注入式测试覆盖")
-class TestKimiProcessLifecycle:
-    @pytest.fixture
-    def fake_kimi(self, tmp_path):
-        """假 kimi：记录 argv、打印 Local/Token 行后睡眠（模拟 kimi web 常驻）。"""
-        script = tmp_path / "kimi"
-        script.write_text(
-            "#!/bin/sh\n"
-            f'echo "$@" > "{tmp_path}/argv.txt"\n'
-            'echo "  Local:    http://127.0.0.1:9999/#token=fake-token-123"\n'
-            'echo "  Token:    fake-token-123"\n'
-            "sleep 300\n"
-        )
-        script.chmod(0o755)
-        return str(script)
+class TestKimiSharedServerDiscovery:
+    def write_instance(self, directory, name, *, port, pid=123, age_ms=0):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(json.dumps({
+            "host": "127.0.0.1", "port": port, "pid": pid,
+            "heartbeat_at": time.time() * 1000 - age_ms,
+        }))
 
-    def test_spawn_uses_no_open(self, fake_kimi, tmp_path):
-        """--no-open：防止每次拉服务器都弹出浏览器标签页（用户实测踩坑）。"""
-        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10)
+    def test_prefers_owner_port_and_close_is_noop(self, tmp_path):
+        instances = tmp_path / "instances"
+        self.write_instance(instances, "other.json", port=39113, pid=111)
+        self.write_instance(instances, "owner.json", port=58627, pid=222, age_ms=1000)
+        token_path = tmp_path / "server.token"
+        token_path.write_text("test-token")
+        p = KimiProvider(instance_dir=str(instances), token_path=str(token_path))
         p._ensure_server()
-        argv = (tmp_path / "argv.txt").read_text()
-        assert "--no-open" in argv
-        assert "--port" in argv
+        assert p._base_url == "http://127.0.0.1:58627"
+        assert p._token == "test-token"
         p.close()
+        assert p._base_url == "http://127.0.0.1:58627"
 
-    def test_token_parsed_and_close_kills(self, fake_kimi):
-        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10)
-        p._ensure_server()
-        assert p._token == "fake-token-123"
-        assert p._base_url is not None and p._base_url.startswith("http://127.0.0.1:")
-        proc = p._proc
-        assert proc.poll() is None  # 保活中
-        p.close()
-        assert proc.poll() is not None  # 已被杀死
-
-    def test_ensure_server_idempotent(self, fake_kimi):
-        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10)
-        p._ensure_server()
-        proc = p._proc
-        p._ensure_server()  # 不重复拉起
-        assert p._proc is proc
-        p.close()
-
-    def test_restart_cooldown(self, fake_kimi):
-        """重启冷却：频繁失败不得反复拉服务器（会刷屏/刷标签页）。"""
-        p = KimiProvider(kimi_bin=fake_kimi, startup_timeout=10,
-                         restart_cooldown=600)
-        p._restart_server()  # 第一次重启成功
-        first_proc = p._proc
-        assert first_proc is not None and first_proc.poll() is None
-        with pytest.raises(KimiError, match="冷却"):
-            p._restart_server()  # 冷却期内第二次 → 拒绝
-        assert p._proc.poll() is None  # 第一次拉起的还活着
-        p.close()
-
-    def test_no_token_raises(self, tmp_path):
-        script = tmp_path / "kimi"
-        script.write_text("#!/bin/sh\nexit 1\n")
-        script.chmod(0o755)
-        p = KimiProvider(kimi_bin=str(script), startup_timeout=3)
-        with pytest.raises(KimiError, match="Token"):
+    def test_rejects_stale_instances_without_spawning(self, tmp_path):
+        instances = tmp_path / "instances"
+        self.write_instance(instances, "stale.json", port=58627, age_ms=130_000)
+        token_path = tmp_path / "server.token"
+        token_path.write_text("test-token")
+        p = KimiProvider(instance_dir=str(instances), token_path=str(token_path))
+        with pytest.raises(KimiError, match="不会自动启动"):
             p._ensure_server()
 
-    def test_missing_binary(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("KIMI_BIN", str(tmp_path / "nonexistent"))
-        monkeypatch.setattr("shutil.which", lambda _: None)
-        monkeypatch.setattr("os.path.expanduser", lambda p: str(tmp_path / "nope"))
-        p = KimiProvider()
-        with pytest.raises(KimiError, match="kimi"):
+    def test_missing_token_does_not_login_or_spawn(self, tmp_path):
+        instances = tmp_path / "instances"
+        self.write_instance(instances, "owner.json", port=58627)
+        p = KimiProvider(instance_dir=str(instances), token_path=str(tmp_path / "missing"))
+        with pytest.raises(KimiError, match="不会自动 login"):
             p._ensure_server()
 
 
@@ -258,3 +224,26 @@ class TestKimiFetchErrors:
         p._get_json = raise_http
         with pytest.raises(KimiError, match="HTTP 401"):
             p.fetch()
+
+    def test_401_reloads_token_once(self, tmp_path):
+        import urllib.error
+
+        token_path = tmp_path / "server.token"
+        token_path.write_text("rotated-token")
+        p = KimiProvider(base_url="http://127.0.0.1:1", token="old-token",
+                         token_path=str(token_path))
+        p._injected = False
+        calls = []
+
+        def get_json(path):
+            calls.append(p._token)
+            if len(calls) == 1:
+                raise urllib.error.HTTPError("http://x", 401, "Unauthorized", None, None)
+            if path.endswith("usage"):
+                return KIMI_RESPONSE
+            return {"data": {}}
+
+        p._get_json = get_json
+        snap = p.fetch()
+        assert snap.provider == "kimi"
+        assert calls[:2] == ["old-token", "rotated-token"]

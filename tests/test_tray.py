@@ -108,6 +108,7 @@ class TestQuotaTray:
         assert texts[9] == "告警阈值"
         assert texts[10] == "主模型显示"
         assert texts[11] == "重置提醒"
+        assert texts[12] == "显示内容"
         assert texts[-1] == "退出"
         # 初始无数据 → 摘要一行
         assert any("无数据" in x for x in texts)
@@ -121,7 +122,7 @@ class TestQuotaTray:
         assert texts == ["显示悬浮窗", "立即刷新", "开机自启", "复制手机访问地址",
                          "推送访问地址到手机", "手机通知（ntfy）订阅指引",
                          "初始设置 / 环境自检", "打开日志目录", "管理额度来源", "告警阈值", "主模型显示",
-                         "重置提醒",
+                         "重置提醒", "显示内容",
                          "Codex · 本周 剩 9%", "Codex GPT-5.3-Codex-Spark · 本周 剩 98%",
                          "退出"]
         assert all(not a.isEnabled() for a in t._summary_actions)

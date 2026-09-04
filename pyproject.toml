@@ -9,7 +9,7 @@ description = "跨平台 Codex 与多 provider 额度实时显示（CLI + 悬浮
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = []
+dependencies = ["certifi"]
 
 [project.optional-dependencies]
 gui = ["PyQt6>=6.5"]

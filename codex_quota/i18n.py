@@ -96,6 +96,8 @@ _EN: dict[str, str] = {
     # 取色来源
     "主模型显示": "Primary model display",
     "重置提醒": "Reset alerts",
+    "显示内容": "Visible items",
+    "勾选的额度项显示在悬浮窗里": "Checked items are shown in the widget",
     "勾选的额度桶回满 100% 时推送手机通知":
         "Checked buckets push to phone when refilled to 100%",
     "（暂无数据）": "(no data yet)",
@@ -112,6 +114,9 @@ _EN: dict[str, str] = {
     "已复制": "Copied",
     "完成并启动": "Finish & Start",
     "跳过": "Skip",
+    "暂不配置 Codex": "Not now for Codex",
+    "仍可使用其他额度来源，之后可从托盘重新打开":
+        "Other providers remain available; reopen setup later from the tray",
     "手机访问（局域网 + 公网隧道）": "Phone access (LAN + public tunnel)",
     "额度重置推送（ntfy）": "Quota reset push (ntfy)",
     "初始设置 / 环境自检": "Setup / Environment check",
@@ -150,10 +155,23 @@ _EN: dict[str, str] = {
     "已登录": "Logged in",
     "未安装": "Not installed",
     "未登录": "Not logged in",
+    "未登录或登录已失效": "Not logged in or login expired",
     "Codex 登录": "Codex login",
     "未安装（可选，仅不显示 Kimi 分区）": "Not installed (optional, Kimi section hidden)",
     "未找到（已装过就设 CODEX_BIN 指向 codex.cmd 的完整路径）":
         "Not found (if installed, set CODEX_BIN to the full path of codex.cmd)",
+    # codex CLI 自动安装
+    "自动安装": "Install automatically",
+    "从 GitHub 下载官方独立二进制（免装 Node.js）":
+        "Download the official standalone binary from GitHub (no Node.js needed)",
+    "下载中…": "Downloading…",
+    "自动安装失败": "Auto-install failed",
+    "去登录": "Log in",
+    "打开终端窗口运行 codex login（浏览器授权）":
+        "Open a terminal running codex login (browser authorization)",
+    "已打开终端": "Terminal opened",
+    "先安装": "Install first",
+    "请手动运行 codex login": "Run codex login manually",
     "未安装（可选，手机仅局域网可看；运行 install.sh 下载）":
         "Not installed (optional, phone view limited to LAN; run install.sh)",
     "退出": "Quit",

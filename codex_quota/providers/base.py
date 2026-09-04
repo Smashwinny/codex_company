@@ -49,7 +49,8 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     if enabled("claude") and (credentials_path() is not None
                               or cfg.get("claude", {}).get("type") == "claude"):
         providers.append(ClaudeCodeProvider())
-    if enabled("kimi") and find_kimi_bin() is not None:
+    if enabled("kimi") and (find_kimi_bin() is not None
+                            or os.path.isdir(os.path.expanduser("~/.kimi-code/server/instances"))):
         providers.append(KimiProvider())
 
     # 配置中的密钥型预设 provider

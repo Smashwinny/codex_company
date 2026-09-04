@@ -140,8 +140,7 @@ def _run_hud(args: list[str]) -> int:
     hud = FloatingHud(providers)
     hud.restore_position()
     settings = hud._settings
-    single.set_raise_callback(
-        lambda: (hud.show(), hud.raise_(), hud.activateWindow()))
+    single.set_raise_callback(hud.show_and_activate)
 
     # 告警阈值（黄线/红线）：settings.json 或托盘菜单"告警阈值"可调
     from .ui.widgets import set_thresholds
@@ -153,9 +152,13 @@ def _run_hud(args: list[str]) -> int:
         logging.getLogger("codex_quota").warning("阈值配置无效，用默认值: %s", exc)
 
     # 首启向导：环境检测 + 修复引导（先于 web/隧道/通知初始化，勾选结果即生效）
+    from .doctor import run_checks
     from .ui.wizard import SetupWizardDialog, should_show_wizard
 
-    if should_show_wizard(settings):
+    # 关键依赖缺失时继续提供修复入口；若客户明确选择
+    # “暂不配置 Codex”，则持久尊重该选择，不阻断其他 provider。
+    checks = run_checks()
+    if should_show_wizard(settings, checks):
         SetupWizardDialog(settings, parent=hud).exec()
 
     # 手机访问：局域网 Web 服务（token 在 URL 里鉴权）+ 可选公网隧道
@@ -253,7 +256,7 @@ def _run_hud(args: list[str]) -> int:
         # GNOME 默认无托盘（需 AppIndicator 扩展）：关窗即退出
         print("提示：未检测到系统托盘，仅运行悬浮窗（关窗即退出）。", file=sys.stderr)
 
-    hud.show()
+    hud.show_and_activate()
 
     # 首次生成 ntfy 主题时自动弹一次订阅指引：订阅关系刚建立，
     # 正是用户最需要"手机上要做什么"的时刻；之后从托盘菜单再开
@@ -351,6 +354,8 @@ def _run_hud(args: list[str]) -> int:
             tunnel_restart_gate, tunnel_restart_thread)
         if cmd_listener is not None:
             cmd_listener.stop()
+        if hud.notifier is not None:
+            hud.notifier.close()
         if tunnel is not None:
             tunnel.stop()
         if web_server is not None:

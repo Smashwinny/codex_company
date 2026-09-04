@@ -21,6 +21,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .bootstrap import managed_codex_path
+
 DEFAULT_TIMEOUT = 15.0  # 秒；超时即 kill 子进程（云端查询实测 2-8s，8s 太紧）
 from . import __version__
 
@@ -144,8 +146,14 @@ class QuotaSnapshot:
         return self.limits[0] if self.limits else None
 
 
+_resolved_bin: Optional[str] = None
+_blacklisted_bins: set[str] = set()
+
+
 def find_codex_bin() -> str:
-    """定位 codex 可执行文件；CODEX_BIN 环境变量可覆盖（容忍指向目录）。
+    """定位 codex 可执行文件（结果缓存；spawn 失败的路径拉黑后自动换候选）。
+
+    CODEX_BIN 环境变量可覆盖（容忍指向目录）。
 
     PATH 找不到时回退搜索：
     - Linux/mac: nvm 版本目录——nvm 切换默认 Node 版本后，装在旧版本
@@ -156,14 +164,45 @@ def find_codex_bin() -> str:
       shutil.which 的 stat 跟随链接时会被 WindowsApps 的 ACL 拒绝
       （内测实测：文件明明在、where 能找到，exists 也返回 False），
       所以 Windows 上用 lexists（只查链接节点本身，不跟随）。
-      "能不能跑"由 spawn 兜底。
+      "能不能跑"由 spawn 兜底：spawn 失败的路径进黑名单，下次自动换候选。
     """
+    global _resolved_bin
+    if _resolved_bin is not None:
+        return _resolved_bin
+    _resolved_bin = _discover_codex_bin()
+    return _resolved_bin
+
+
+def invalidate_codex_bin(path: str) -> None:
+    """spawn 失败（如 MSIX 包内 exe 被 WinError 5 拒绝）时拉黑并清缓存，
+    下次查询自动发现顺位切换到下一个候选——无需用户手动改环境变量。"""
+    global _resolved_bin
+    if _resolved_bin == path:
+        _resolved_bin = None
+    _blacklisted_bins.add(path)
+
+
+def reset_codex_bin_cache() -> None:
+    """刚装好/卸载 codex 时调用：清缓存触发重新发现（黑名单保留）。"""
+    global _resolved_bin
+    _resolved_bin = None
+
+
+def _discover_codex_bin() -> str:
     is_win = sys.platform == "win32"
 
     def _usable(path: str) -> bool:
         if is_win:
+            # 强制可执行后缀：防止把目录（如 CODEX_BIN 指向 ...\bin 且 isdir
+            # 因 junction ACL 返回 False）当可执行文件返回
+            if not path.lower().endswith((".exe", ".cmd", ".bat")):
+                return False
             return os.path.lexists(path)
         return os.path.isfile(path) and os.access(path, os.X_OK)
+
+    def _ok(path: str) -> bool:
+        """存在 且 不在 spawn 失败黑名单里。"""
+        return path not in _blacklisted_bins and _usable(path)
 
     override = os.environ.get("CODEX_BIN")
     if override:
@@ -174,7 +213,7 @@ def find_codex_bin() -> str:
                           for n in ("codex.exe", "codex.cmd", "codex.bat",
                                     "codex")]
         for cand in candidates:
-            if _usable(cand):
+            if _ok(cand):
                 return cand
         # 指向无效路径（填错/已卸载残留）不应硬失败——警告后继续正常发现流程，
         # 否则一个过期的环境变量会把整个定位链路锁死（内测实测踩到）
@@ -184,18 +223,27 @@ def find_codex_bin() -> str:
             "CODEX_BIN 指向的文件不可执行，忽略并继续自动发现: %s", override)
     tried = []
     if is_win:
-        # shutil.which 的 isfile 过滤会误杀 MSIX shim——手动扫 PATH，只认存在
-        for d in os.environ.get("PATH", "").split(os.pathsep):
+        # shutil.which 的 isfile 过滤会误杀 MSIX shim——手动扫 PATH，只认存在。
+        # 进程环境可能是登录时的旧快照（工具装好后没注销重登就扫不到），
+        # 注册表里的用户/系统 PATH 才是最新的——合并去重
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        try:
+            for entry in _windows_registry_path_entries():
+                if entry not in path_entries:
+                    path_entries.append(entry)
+        except Exception:
+            pass
+        for d in path_entries:
             if not d:
                 continue
             for name in ("codex.exe", "codex.cmd", "codex.bat"):
                 cand = os.path.join(d, name)
-                if os.path.lexists(cand):
+                if _ok(cand):
                     return cand
         tried.append("PATH")
     else:
         path = shutil.which("codex")
-        if path is not None:
+        if path is not None and _ok(path):
             return path
         tried.append("PATH")
     import glob
@@ -206,13 +254,14 @@ def find_codex_bin() -> str:
             tried.append(f"npm prefix: {prefix}")
         candidates = _windows_codex_candidates()
     else:
-        candidates = sorted(
+        candidates = [managed_codex_path()]  # 我们托管安装的（免 Node）
+        candidates += sorted(
             glob.glob(os.path.join(os.path.expanduser("~"), ".nvm", "versions",
                                    "node", "*", "bin", "codex")),
             reverse=True,  # 版本号大的优先
         )
     for candidate in candidates:
-        if _usable(candidate):
+        if _ok(candidate):
             return candidate
     tried.extend(candidates)
     # 报错信息直接带上所有找过的位置——远程排障不用来回要日志
@@ -251,6 +300,30 @@ def _npm_prefix() -> Optional[str]:
     return prefix or None
 
 
+def _windows_registry_path_entries() -> list[str]:
+    """从注册表读最新的用户/系统 PATH。
+
+    进程环境是启动时刻（可能开机自启）的快照——工具装好后没注销重登，
+    进程 PATH 里就没有新条目（内测实测：终端 where 能找到，应用找不到）。
+    注册表里的才是最新的。
+    """
+    import winreg
+
+    entries: list[str] = []
+    for root, sub in (
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+        (winreg.HKEY_LOCAL_MACHINE,
+         r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ):
+        try:
+            with winreg.OpenKey(root, sub) as k:
+                raw, _ = winreg.QueryValueEx(k, "Path")
+            entries.extend(e for e in os.path.expandvars(str(raw)).split(";") if e)
+        except (FileNotFoundError, OSError):
+            continue
+    return entries
+
+
 def _windows_codex_candidates() -> list[str]:
     """Windows 下 codex 的常见安装位置（PATH 之外的兜底，按可能性排序）。"""
     appdata = os.environ.get("APPDATA") or ""
@@ -260,12 +333,16 @@ def _windows_codex_candidates() -> list[str]:
     if prefix:
         candidates.append(os.path.join(prefix, "codex.cmd"))
     candidates += [
+        # MSIX/商店版的应用执行别名——商店包目录里的 exe 直接 CreateProcess
+        # 会被拒（WinError 5），必须从别名启动（内测实测）
+        os.path.join(local, "Microsoft", "WindowsApps", "codex.exe"),
         os.path.join(appdata, "npm", "codex.cmd"),              # npm 全局默认
         # Codex 官方独立安装包（OpenAI\Codex 目录，bin 有无子级两种布局都试）
         os.path.join(local, "Programs", "OpenAI", "Codex", "bin", "codex.exe"),
         os.path.join(local, "Programs", "OpenAI", "Codex", "codex.exe"),
         os.path.join(local, "Programs", "codex", "codex.exe"),
         os.path.join(os.path.expanduser("~"), ".codex", "bin", "codex.exe"),
+        managed_codex_path(),  # 我们托管安装的（免 Node，向导自动装）
     ]
     return candidates
 
@@ -400,15 +477,46 @@ class AppServerClient:
 
         # pythonw 启动的 GUI 没有可继承控制台；codex.cmd 会经 cmd.exe /c，
         # 不显式禁止窗口就可能在每次额度刷新时闪出黑框
-        proc = popen_external(
-            wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-            **hidden_console_kwargs(),
-        )
+        last_exc = None
+        proc = None
+        attempted: list[str] = []
+        while True:
+            attempted.append(self.codex_bin)
+            try:
+                proc = popen_external(
+                    wrap_cmd_shim([self.codex_bin, "app-server"]),  # Windows npm 是 codex.cmd
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    bufsize=1,
+                    **hidden_console_kwargs(),
+                )
+                break
+            except OSError as exc:
+                last_exc = exc
+                if sys.platform != "win32":
+                    break
+                invalidate_codex_bin(self.codex_bin)
+                try:
+                    next_bin = find_codex_bin()
+                except CodexNotFoundError:
+                    break
+                if next_bin in attempted:
+                    break
+                self.codex_bin = next_bin
+
+        if proc is None:
+            # WinError 5（拒绝访问）常见于商店/MSIX 版 Codex 桌面应用的包内
+            # exe——它不是 CLI，被容器锁住无法由外部进程启动（内测实测）。
+            # 黑名单只在 Windows 生效：POSIX 的 spawn 失败多是瞬时性的
+            # （资源压力等），拉黑唯一正确的 codex 路径反而是回退
+            raise AppServerError(
+                f"无法启动 codex（已尝试: {'；'.join(attempted)}）: {last_exc}\n"
+                f"提示：如果装的是微软商店的 Codex 桌面应用，它和 Codex CLI "
+                f"不是一回事——请在初始设置中选择‘自动安装’，"
+                f"或设置 CODEX_BIN 指向真实的 codex.exe/codex.cmd"
+            ) from last_exc
         lines: queue.Queue[str] = queue.Queue()
 
         def _pump() -> None:

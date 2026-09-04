@@ -29,13 +29,44 @@ def _pump(app, ms=300):
         time.sleep(0.01)
 
 
+def _pump(app, ms=300):
+    """手动驱动事件循环，让 newConnection 等信号得以派发。"""
+    import time
+
+    deadline = time.monotonic() + ms / 1000
+    while time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+
+
+def _acquire_pumped(app, inst, timeout=10):
+    """在后台线程跑 try_acquire 并在主线程驱动事件循环。
+
+    ack 握手是双向的：进程内测试里若主线程直接调 b.try_acquire()，
+    a 的事件循环没机会处理连接和回 ack，会误判 a 是僵尸。生产里两个
+    实例是独立进程，无此问题。
+    """
+    import threading
+    import time
+
+    result = []
+    t = threading.Thread(target=lambda: result.append(inst.try_acquire()))
+    t.start()
+    deadline = time.monotonic() + timeout
+    while t.is_alive() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    t.join(timeout=2)
+    return result[0]
+
+
 class TestSingleInstance:
     def test_first_acquires_second_rejected(self, qapp):
         name = _name()
         a = SingleInstance(name)
         assert a.try_acquire() is True
         b = SingleInstance(name)
-        assert b.try_acquire() is False
+        assert _acquire_pumped(qapp, b) is False
 
     def test_second_instance_raises_first(self, qapp):
         name = _name()
@@ -44,7 +75,7 @@ class TestSingleInstance:
         assert a.try_acquire() is True
         a.set_raise_callback(lambda: raised.append(1))
         b = SingleInstance(name)
-        assert b.try_acquire() is False
+        assert _acquire_pumped(qapp, b) is False
         _pump(qapp)
         assert raised == [1]
 
@@ -80,6 +111,12 @@ class TestSingleInstance:
 
             def waitForBytesWritten(self, _timeout):
                 return True
+
+            def waitForReadyRead(self, _timeout):
+                return True
+
+            def readAll(self):
+                return single_instance.ACK_MSG  # 健康实例会回 ack
 
             def disconnectFromServer(self):
                 pass
@@ -144,3 +181,31 @@ class TestSingleInstance:
         c = SingleInstance(name)
         # server 已析构 → c 应能 listen 成功成为首实例
         assert c.try_acquire() is True
+
+    def test_zombie_takeover(self, qapp, monkeypatch):
+        """首实例持锁但永不回 ack（事件循环死掉的僵尸）→ 新实例接管而非被拒。"""
+        import os
+
+        from PyQt6.QtCore import QLockFile
+        from PyQt6.QtNetwork import QLocalServer
+
+        from codex_quota.sysdirs import cache_dir
+
+        name = _name()
+        # 僵尸：锁被占、server 在 listen 但没有处理器（永不回 ack）
+        os.makedirs(cache_dir(), exist_ok=True)  # QLockFile 不会自建父目录
+        lock = QLockFile(os.path.join(cache_dir(), f"{name}.lock"))
+        assert lock.tryLock(0)
+        zombie = QLocalServer()
+        assert zombie.listen(name)
+        # app.pid 指向不存在的进程 → 杀僵尸逻辑无害跳过
+        with open(os.path.join(cache_dir(), "app.pid"), "w") as f:
+            f.write("999999")
+        monkeypatch.setattr(single_instance, "ACK_TIMEOUT_MS", 100)
+        monkeypatch.setattr(single_instance.time, "sleep", lambda _s: None)
+
+        inst = SingleInstance(name)
+        assert inst.try_acquire() is True   # 接管成功，不被僵尸卡死
+        inst2 = SingleInstance(name)        # 接管者现在是健康首实例
+        assert _acquire_pumped(qapp, inst2) is False  # 正常互斥恢复
+        zombie.close()

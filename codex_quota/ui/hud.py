@@ -17,6 +17,10 @@ from __future__ import annotations
 import datetime as dt
 import html
 import logging
+import os
+import shutil
+import subprocess
+import sys
 import time
 from typing import Optional
 
@@ -39,7 +43,13 @@ from ..i18n import tr
 from ..model_info import ModelInfo, read_model_info
 from ..notify import ResetWatcher, notify_resets
 from ..settings import Settings
-from ..state import ProviderView, StateStore, ViewState, default_cache_path
+from ..state import (
+    ProviderView,
+    StateStore,
+    ViewState,
+    default_cache_path,
+    key_excluded,
+)
 from .widgets import QuotaBar, abs_level_color, threshold_color
 
 REFRESH_INTERVAL_MS = 60_000   # 活跃期自动刷新
@@ -60,6 +70,18 @@ ERROR_MAX_CHARS = 120  # 分区内联错误最大字符数（完整内容放 too
 def _short(text: object, limit: int) -> str:
     s = str(text)
     return s if len(s) <= limit else s[: limit - 1] + "…"
+
+
+def _active_workspace(wmctrl_output: str) -> Optional[int]:
+    """Parse the current EWMH desktop from ``wmctrl -d`` output."""
+    for line in wmctrl_output.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[1] == "*":
+            try:
+                return int(fields[0])
+            except ValueError:
+                return None
+    return None
 
 # provider 分区标识色
 PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7"}
@@ -320,7 +342,12 @@ class FloatingHud(QWidget):
             self._scheduler.on_success()
         else:
             self._scheduler.on_failure()
-        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        interval = self._scheduler.next_interval_ms()
+        # 开启重置通知时，成功查询状态下即使 HUD 隐藏也最多 60s
+        # 就再检查一次；全 provider 失败时仍保留原有退避。
+        if self.notifier is not None and self._any_success:
+            interval = min(interval, 60_000)
+        self._refresh_timer.setInterval(interval)
         # fetcher 已 deleteLater，立刻清空引用——
         # 否则下次 refresh 会访问已删除的 C++ 对象导致崩溃
         self._fetcher = None
@@ -361,6 +388,12 @@ class FloatingHud(QWidget):
     def _apply_rebuild(self) -> None:
         self._clear_content()
         self._update_model_badge()  # 每次刷新重读 config.toml，改模型即时生效
+        # 显示内容开关（托盘菜单勾选）：隐藏的额度项不渲染
+        hidden = frozenset(self._settings.get("hud_hidden") or [])
+
+        def _hidden(limit, w) -> bool:
+            bucket = limit.limit_name or limit.limit_id
+            return key_excluded(f"{p.name}:{bucket}:{w.label}", hidden)
 
         for p in self._providers:
             st = self._stores[p.name].state
@@ -380,8 +413,10 @@ class FloatingHud(QWidget):
             now_ts = snap.fetched_at
             main = snap.primary_limit
             if main is not None:
-                self._add_window_row(main.primary, now_ts)
-                if main.secondary is not None and not self._compact:
+                if not _hidden(main, main.primary):
+                    self._add_window_row(main.primary, now_ts)
+                if (main.secondary is not None and not self._compact
+                        and not _hidden(main, main.secondary)):
                     self._add_window_row(main.secondary, now_ts)
                 if main.credits is not None and main.credits.has_credits and not self._compact:
                     c = main.credits
@@ -391,12 +426,15 @@ class FloatingHud(QWidget):
                     self._content.addWidget(lbl)
             if not self._compact:
                 for extra in snap.limits[1:]:
+                    wins = [w for w in (extra.primary, extra.secondary)
+                            if w is not None and not _hidden(extra, w)]
+                    if not wins:
+                        continue  # 整桶隐藏：分隔线也不显示
                     sep = QLabel(f"  ── {extra.limit_name or extra.limit_id} ──")
                     sep.setStyleSheet(f"color: {FG_DIM}; font-size: 11px;")
                     self._content.addWidget(sep)
-                    self._add_window_row(extra.primary, now_ts)
-                    if extra.secondary is not None:
-                        self._add_window_row(extra.secondary, now_ts)
+                    for w in wins:
+                        self._add_window_row(w, now_ts)
             self._add_fresh_line(st)  # 每个分区自己的更新时间
 
         self._update_footer()
@@ -493,6 +531,47 @@ class FloatingHud(QWidget):
         if (isinstance(pos, list) and len(pos) == 2
                 and all(isinstance(v, int) for v in pos)):
             self.move(pos[0], pos[1])
+
+    def show_and_activate(self) -> None:
+        """Restore a hidden HUD and make it reachable on the current desktop.
+
+        ``show()/raise_()`` alone does not move a Qt.Tool window from another
+        GNOME workspace.  That leaves a live process and a viewable X11 window
+        that the user cannot reach from the taskbar.  On Linux/X11, use the
+        optional wmctrl utility to move it to the active workspace; other
+        platforms retain the normal Qt behavior.
+        """
+        self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        QTimer.singleShot(0, self._move_to_active_workspace)
+
+    def _move_to_active_workspace(self) -> None:
+        if (not sys.platform.startswith("linux")
+                or not os.environ.get("DISPLAY")):
+            return
+        wmctrl = shutil.which("wmctrl")
+        if wmctrl is None:
+            return
+        try:
+            desktops = subprocess.run(
+                [wmctrl, "-d"], check=False, capture_output=True,
+                text=True, timeout=2)
+            active = _active_workspace(desktops.stdout)
+            if active is None:
+                return
+            window_id = hex(int(self.winId()))
+            subprocess.run(
+                [wmctrl, "-ir", window_id, "-t", str(active)],
+                check=False, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=2)
+            subprocess.run(
+                [wmctrl, "-ia", window_id], check=False,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=2)
+        except (OSError, subprocess.SubprocessError) as exc:
+            logger.warning("恢复悬浮窗到当前工作区失败: %s", exc)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
