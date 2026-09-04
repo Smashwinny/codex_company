@@ -354,6 +354,8 @@ def _run_hud(args: list[str]) -> int:
             tunnel_restart_gate, tunnel_restart_thread)
         if cmd_listener is not None:
             cmd_listener.stop()
+        if hud.notifier is not None:
+            hud.notifier.close()
         if tunnel is not None:
             tunnel.stop()
         if web_server is not None:

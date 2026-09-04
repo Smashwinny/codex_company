@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -161,6 +162,51 @@ class TestNtfyNotifier:
     def test_subscribe_url(self):
         n = NtfyNotifier(server="https://ntfy.sh/", topic="abc")
         assert n.subscribe_url == "https://ntfy.sh/abc"
+
+    def test_reliable_queue_retries_until_success(self, tmp_path):
+        outbox = tmp_path / "notify-outbox.json"
+        n = NtfyNotifier(topic="t", outbox_path=str(outbox),
+                         retry_delays=(0.01,), timeout=0.1)
+        calls = []
+
+        def flaky(*_args, **_kwargs):
+            calls.append(1)
+            return len(calls) >= 2
+
+        n.publish = flaky
+        assert n.enqueue("codex:weekly:1", "title", "body") is True
+        deadline = time.time() + 2
+        while time.time() < deadline:
+            if len(calls) >= 2 and json.loads(outbox.read_text()) == []:
+                break
+            time.sleep(0.01)
+        n.close()
+        assert len(calls) >= 2
+        assert json.loads(outbox.read_text()) == []
+
+    def test_pending_queue_is_resumed_after_restart(self, tmp_path):
+        outbox = tmp_path / "notify-outbox.json"
+        outbox.write_text(json.dumps([{
+            "id": "old", "key": "codex:weekly:1", "title": "title",
+            "body": "body", "priority": "urgent", "tags": "reset",
+            "click": "", "detected_at": time.time() - 60,
+            "attempt": 1, "next_try": 0,
+        }]))
+        delivered = []
+
+        class RecoveringNotifier(NtfyNotifier):
+            def publish(self, *_args, **_kwargs):
+                delivered.append(1)
+                return True
+
+        n = RecoveringNotifier(topic="t", outbox_path=str(outbox),
+                               retry_delays=(0.01,))
+        deadline = time.time() + 2
+        while time.time() < deadline and json.loads(outbox.read_text()):
+            time.sleep(0.01)
+        n.close()
+        assert delivered
+        assert json.loads(outbox.read_text()) == []
 
 
 class TestNotifyResets:

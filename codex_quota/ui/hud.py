@@ -342,7 +342,12 @@ class FloatingHud(QWidget):
             self._scheduler.on_success()
         else:
             self._scheduler.on_failure()
-        self._refresh_timer.setInterval(self._scheduler.next_interval_ms())
+        interval = self._scheduler.next_interval_ms()
+        # 开启重置通知时，成功查询状态下即使 HUD 隐藏也最多 60s
+        # 就再检查一次；全 provider 失败时仍保留原有退避。
+        if self.notifier is not None and self._any_success:
+            interval = min(interval, 60_000)
+        self._refresh_timer.setInterval(interval)
         # fetcher 已 deleteLater，立刻清空引用——
         # 否则下次 refresh 会访问已删除的 C++ 对象导致崩溃
         self._fetcher = None

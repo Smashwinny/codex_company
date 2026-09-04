@@ -260,6 +260,13 @@ class TestInteractions:
         live_hud.refresh()
         assert len(live_hud._rows) == 2
 
+    def test_notifications_cap_hidden_success_poll_at_60s(self, live_hud):
+        live_hud.notifier = object()
+        live_hud._scheduler.set_visible(False)
+        live_hud._any_success = True
+        live_hud._on_fetch_done()
+        assert live_hud._refresh_timer.interval() == 60_000
+
     def test_close_button_hides(self, live_hud):
         live_hud.show()
         QTest.mouseClick(live_hud._close_btn, Qt.MouseButton.LeftButton)
