@@ -4,8 +4,9 @@ Windows / Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**�
 
 - **Codex 数据源**：本地 `codex app-server` 的只读 JSON-RPC 方法 `account/rateLimits/read`，
   不读取 `auth.json`、不接触登录凭证、网络零外发。
-- **Kimi 数据源**：本地 `kimi web` 服务器的只读接口 `GET /api/v1/oauth/usage`
-  （Bearer token 从其 stdout 解析，服务器随应用退出自动回收）。
+- **Kimi 数据源**：复用本机已有 `kimi web` 的只读接口 `GET /api/v1/oauth/usage`。
+  本应用不启动、不停止、不重启 Kimi Web，也不会执行 `kimi login`；Ubuntu 上由
+  `/home/hulk/stupid` 的 `kimi-code-web.service` 唯一负责生命周期。
 - **隐私**：所有数据仅保留在本机。
 
 > 设计调研与整体规划见 [DESIGN.md](DESIGN.md)。
@@ -69,6 +70,8 @@ Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\code
 | 开机自启 | 启动后在托盘菜单勾选"开机自启" |
 
 已在运行时重复启动只会提示"已在运行"，不会开第二个实例。
+
+Kimi provider 扫描 `~/.kimi-code/server/instances/*.json`，使用120秒内的心跳并优先端口58627，随后按请求读取 `~/.kimi-code/server.token`。HTTP 401 时重新读取 token 并只重试一次；日志只记录端口、PID和HTTP状态，禁止输出 token。Linux 当前 owner 启动命令为 `/home/hulk/.kimi-code/bin/kimi web --no-open --port 58627`。
 
 **首次启动会弹出设置向导**：自动检测 Codex CLI（安装/登录）、Kimi、cloudflared，
 缺失项旁边直接给"复制命令"按钮，修好点"全部重新检测"即可，全程不用查文档。

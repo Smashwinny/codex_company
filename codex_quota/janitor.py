@@ -4,10 +4,12 @@
 - pidfile 轨（全平台）：proc.sweep_pidfile() 按 children.pid 回收上轮
   spawn 的 kimi web / cloudflared——Windows 无 /proc 可扫，这是唯一
   不引入 psutil/WMI 依赖的回收途径
-- /proc 扫描轨（仅 POSIX，保留已有稳定行为），匹配特征（只杀我们明确
+- /proc 扫描轨（仅 POSIX）仅限 cloudflared，匹配特征（只杀我们明确
   标识的，绝不误伤用户自己的进程）：
   - cloudflared：vendor 路径 或 （--url 127.0.0.1 + --no-autoupdate 组合特征）
-  - kimi web：命令行含 --no-open（用户手动跑 kimi web 不会带这个参数）
+
+Kimi Web 可能是其他项目管理的共享外部服务。`--no-open` 不能证明所有权，
+因此 Kimi 进程只允许通过 children.pid 中记录的精确 PID 回收。
 """
 
 from __future__ import annotations
@@ -31,10 +33,6 @@ def is_our_cloudflared(cmdline: list[str]) -> bool:
             and "--no-autoupdate" in cmdline
             and "--url" in cmdline
             and any("127.0.0.1" in a for a in cmdline))
-
-
-def is_our_kimi_web(cmdline: list[str]) -> bool:
-    return "--no-open" in cmdline and "web" in cmdline
 
 
 def _read_cmdline(pid: int) -> Optional[list[str]]:
@@ -76,7 +74,9 @@ def cleanup_orphans(*, list_pids: Optional[Callable[[], list[int]]] = None,
         cmd = read_cmdline(pid)
         if not cmd:
             continue
-        if is_our_cloudflared(cmd) or is_our_kimi_web(cmd):
+        # Kimi Web 故意不参与扫描：其所有权只能由上面的 children.pid 轨
+        # 证明。共享 systemd owner 同样使用 --no-open，不能据此杀进程。
+        if is_our_cloudflared(cmd):
             try:
                 kill(pid)
                 killed += 1
