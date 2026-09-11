@@ -93,6 +93,9 @@ class TestSingleInstance:
             def __init__(self, _path):
                 pass
 
+            def setStaleLockTime(self, _timeout):
+                pass
+
             def tryLock(self, _timeout):
                 return False
 
@@ -133,8 +136,8 @@ class TestSingleInstance:
         assert instance.try_acquire() is False
         assert sent == [b"raise"]
 
-    def test_phantom_lock_broken_instead_of_lockout(self, qapp, monkeypatch):
-        """锁永远拿不到且无人能连接（崩溃残留+PID 复用）→ 破除后继续，不锁死。"""
+    def test_unavailable_lock_never_bypasses_exclusion(self, qapp, monkeypatch):
+        """拿不到锁且无人应答时也不得删锁或无锁启动。"""
         import time as _time
 
         removed = []
@@ -144,6 +147,9 @@ class TestSingleInstance:
 
             def __init__(self, path):
                 self._path = path
+
+            def setStaleLockTime(self, _timeout):
+                pass
 
             def tryLock(self, _timeout):
                 return False
@@ -157,15 +163,15 @@ class TestSingleInstance:
                             lambda p: removed.append(p))
 
         inst = SingleInstance(_name())
-        assert inst.try_acquire() is True   # 不再静默锁死
-        assert removed, "幻影锁应被强制破除"
+        assert inst.try_acquire() is False
+        assert removed == []
 
-    def test_lock_io_failure_falls_back_to_soft_mode(self, qapp, monkeypatch):
-        """锁文件创建就 OSError（目录只读等）→ 降级继续，不锁死。"""
+    def test_lock_io_failure_refuses_unlocked_start(self, qapp, monkeypatch):
+        """锁文件不可写时不能绕过互斥启动。"""
         monkeypatch.setattr(single_instance.os, "makedirs",
                             lambda *a, **k: (_ for _ in ()).throw(OSError("ro fs")))
         inst = SingleInstance(_name())
-        assert inst.try_acquire() is True
+        assert inst.try_acquire() is False
 
     def test_stale_socket_recovered(self, qapp):
         """模拟首实例崩溃：不 delete server、直接丢弃引用，新实例应能接管。"""
@@ -182,8 +188,8 @@ class TestSingleInstance:
         # server 已析构 → c 应能 listen 成功成为首实例
         assert c.try_acquire() is True
 
-    def test_zombie_takeover(self, qapp, monkeypatch):
-        """首实例持锁但永不回 ack（事件循环死掉的僵尸）→ 新实例接管而非被拒。"""
+    def test_unresponsive_owner_is_preserved(self, qapp, monkeypatch):
+        """持锁进程暂不处理 IPC 也不能被杀或被第二实例绕过。"""
         import os
 
         from PyQt6.QtCore import QLockFile
@@ -191,7 +197,8 @@ class TestSingleInstance:
 
         from codex_quota.sysdirs import cache_dir
 
-        name = _name()
+        inst = SingleInstance(_name())
+        name = inst._name
         # 僵尸：锁被占、server 在 listen 但没有处理器（永不回 ack）
         os.makedirs(cache_dir(), exist_ok=True)  # QLockFile 不会自建父目录
         lock = QLockFile(os.path.join(cache_dir(), f"{name}.lock"))
@@ -204,8 +211,10 @@ class TestSingleInstance:
         monkeypatch.setattr(single_instance, "ACK_TIMEOUT_MS", 100)
         monkeypatch.setattr(single_instance.time, "sleep", lambda _s: None)
 
-        inst = SingleInstance(name)
-        assert inst.try_acquire() is True   # 接管成功，不被僵尸卡死
-        inst2 = SingleInstance(name)        # 接管者现在是健康首实例
-        assert _acquire_pumped(qapp, inst2) is False  # 正常互斥恢复
+        monkeypatch.setattr(single_instance.os, "kill",
+                            lambda *args: pytest.fail("must not kill a live owner"))
+        assert inst.try_acquire() is False
+        assert lock.isLocked()
+        assert zombie.isListening()
         zombie.close()
+        lock.unlock()

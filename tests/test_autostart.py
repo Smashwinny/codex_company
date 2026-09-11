@@ -9,6 +9,13 @@ import pytest
 from codex_quota import autostart
 
 
+def test_linux_desktop_entry_sets_project_working_directory():
+    entry = autostart.desktop_entry()
+    project_root = str(autostart.os.path.dirname(
+        autostart.os.path.dirname(autostart.os.path.abspath(autostart.__file__))))
+    assert f"Path={project_root}\n" in entry
+
+
 class FakeKey:
     """winreg key 句柄替身：支持 with 协议。"""
 
@@ -20,6 +27,13 @@ class FakeKey:
 
     def __exit__(self, *args):
         return False
+
+
+def test_linux_desktop_entry_sets_import_working_directory():
+    entry = autostart.desktop_entry("/venv/bin/python -m codex_quota")
+    project_root = str(autostart.os.path.dirname(
+        autostart.os.path.dirname(autostart.os.path.abspath(autostart.__file__))))
+    assert f"Path={project_root}\n" in entry
 
 
 class FakeWinreg:

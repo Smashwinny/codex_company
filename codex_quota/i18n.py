@@ -49,6 +49,8 @@ _EN: dict[str, str] = {
     "立即刷新": "Refresh now",
     "显示悬浮窗": "Show widget",
     "隐藏悬浮窗": "Hide widget",
+    "找回悬浮窗": "Bring widget here",
+    "所有工作区始终显示": "Show on all workspaces",
     "开机自启": "Launch at login",
     "复制手机访问地址": "Copy phone access URL",
     "手机与电脑同一局域网，浏览器打开即看": "Open in phone browser on the same LAN",

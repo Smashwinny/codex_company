@@ -139,6 +139,14 @@ class QuotaTray(QObject):
 
         self.action_toggle = QAction(tr("显示悬浮窗"), self)
         self.action_toggle.triggered.connect(self._toggle_hud)
+        # Qt visibility stays true on another workspace or after WM minimization.
+        # Keep a recovery action available independently of that flag.
+        self.action_restore = QAction(tr("找回悬浮窗"), self)
+        self.action_restore.triggered.connect(self._restore_hud)
+        self.action_all_workspaces = QAction(tr("所有工作区始终显示"), self)
+        self.action_all_workspaces.setCheckable(True)
+        self.action_all_workspaces.setChecked(bool(hud._settings.get("all_workspaces")))
+        self.action_all_workspaces.toggled.connect(hud.set_all_workspaces)
         self.action_refresh = QAction(tr("立即刷新"), self)
         self.action_refresh.triggered.connect(self._hud.refresh)
         self.action_autostart = QAction(tr("开机自启"), self)
@@ -194,6 +202,8 @@ class QuotaTray(QObject):
 
         self._menu = QMenu()
         self._menu.addAction(self.action_toggle)
+        self._menu.addAction(self.action_restore)
+        self._menu.addAction(self.action_all_workspaces)
         self._menu.addAction(self.action_refresh)
         self._menu.addAction(self.action_autostart)
         self._menu.addAction(self.action_phone)
@@ -245,13 +255,26 @@ class QuotaTray(QObject):
             self._hud.show_and_activate()
 
     def _rebuild_tray(self) -> None:
-        old = self.tray
-        self.tray = QSystemTrayIcon(make_dot_icon(COLOR_UNKNOWN), parent=self)
+        # Recreate the native menu items as well as the tray registration.
+        # Reusing the old exported menu can leave labels intact but its D-Bus
+        # action IDs unresponsive after registration has been replaced.
+        self.tray.hide()
+        self.tray.setContextMenu(None)
+        old_menu = self._menu
+        actions = old_menu.actions()
+        self._menu = QMenu()
+        for action in actions:
+            if action.parent() is old_menu:
+                action.setParent(self._menu)
+            old_menu.removeAction(action)
+        for action in actions:
+            self._menu.addAction(action)
+        self._menu.aboutToShow.connect(self._sync_toggle_text)
         self.tray.setContextMenu(self._menu)
-        self.tray.activated.connect(self._on_activated)
+        old_menu.deleteLater()
         self.tray.show()
         self.update_state(self._hud._current_views())
-        old.deleteLater()
+        self._sync_toggle_text()
         self._tray_visible = True
         logging.getLogger("codex_quota.tray").info("系统托盘恢复，图标已重建")
 
@@ -338,6 +361,10 @@ class QuotaTray(QObject):
             self._hud.hide()
         else:
             self._hud.show_and_activate()
+        self._sync_toggle_text()
+
+    def _restore_hud(self) -> None:
+        self._hud.show_and_activate()
         self._sync_toggle_text()
 
     def _toggle_autostart(self, checked: bool) -> None:

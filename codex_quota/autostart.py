@@ -28,12 +28,14 @@ def autostart_dir() -> str:
 
 def desktop_entry(exec_cmd: Optional[str] = None) -> str:
     exec_cmd = exec_cmd or f"{sys.executable} -m codex_quota"
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     return (
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=codex-quota\n"
         "Comment=Codex quota floating widget\n"
         f"Exec={exec_cmd}\n"
+        f"Path={project_root}\n"
         "Terminal=false\n"
         "X-GNOME-Autostart-enabled=true\n"
     )

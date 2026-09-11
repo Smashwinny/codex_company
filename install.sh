@@ -117,6 +117,7 @@ Type=Application
 Name=Codex Quota
 Comment=Codex/Kimi 额度悬浮窗 / AI quota floating widget
 Exec=$ROOT/bin/codex-quota
+Path=$ROOT
 Icon=codex-quota
 Terminal=false
 Categories=Utility;Development;

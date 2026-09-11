@@ -9,6 +9,11 @@ ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 PY="$ROOT/.venv/bin/python"
 [ -x "$PY" ] || PY=python3
 
+# `python -m codex_quota` depends on the project root being importable.  Desktop
+# launchers and login autostart do not inherit the terminal's working directory,
+# so make the launcher independent of where it was invoked from.
+cd "$ROOT"
+
 # 无 root 时 vendor/ 里的 libxcb-cursor 兜底（系统已装则无需）
 if [ -d "$ROOT/vendor/lib" ]; then
     export LD_LIBRARY_PATH="$ROOT/vendor/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -40,11 +45,8 @@ if [ "${1:-}" = "stop" ] || [ "${1:-}" = "restart" ]; then
     echo "正在重启..."
 fi
 
-if pgrep -f "[b]in/python.*-m codex_quota" >/dev/null 2>&1; then
-    echo "codex-quota 已在运行"
-    exit 0
-fi
-
+# Always reach the application's atomic single-instance gate. An existing
+# instance receives a raise request; a concurrent launcher cannot create a HUD.
 setsid "$PY" -m codex_quota "$@" >>"$LOG_DIR/hud.log" 2>&1 < /dev/null &
 disown
 # 启动后等 3 秒确认进程真的活着：之前 spawn 完就打印"已启动"，

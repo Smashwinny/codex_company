@@ -154,6 +154,30 @@ class TestHudSmoke:
         assert not hud.isMinimized()
         assert moved == [True]
 
+    def test_workspace_setting_selects_all_or_current(self, hud, monkeypatch):
+        from types import SimpleNamespace
+        from codex_quota.ui import hud as module
+        monkeypatch.setattr(module.sys, "platform", "linux")
+        monkeypatch.setenv("DISPLAY", ":1")
+        monkeypatch.setattr(module.shutil, "which", lambda _: "/usr/bin/wmctrl")
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            return SimpleNamespace(stdout="0 - DG: 4480x1440\n1 * DG: 4480x1440\n")
+        monkeypatch.setattr(module.subprocess, "run", run)
+        hud.set_all_workspaces(True)
+        QApplication.processEvents()
+        assert any(args[-2:] == ["-t", "-1"] for args in calls)
+        calls.clear()
+        hud.set_all_workspaces(False)
+        QApplication.processEvents()
+        assert any(args[-2:] == ["-t", "1"] for args in calls)
+        calls.clear()
+        hud.show_and_activate()
+        hud.hide()
+        QApplication.processEvents()
+        assert calls == []  # queued activation must not undo a user's Hide
+
 
 class TestWidgets:
     def test_threshold_colors(self):

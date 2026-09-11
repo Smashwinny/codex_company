@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QCoreApplication, QEvent
 from PyQt6.QtWidgets import QApplication
 
 from codex_quota.state import ProviderView, ViewState
@@ -28,6 +29,7 @@ def view(state: ViewState, name="codex", display="Codex") -> ProviderView:
     return ProviderView(name=name, display_name=display, state=state)
 
 
+@pytest.mark.usefixtures("qapp")
 class TestDotIcon:
     def test_center_pixel_matches_color(self):
         icon = make_dot_icon(QColor("#ff0000"), size=64)
@@ -97,6 +99,8 @@ class TestQuotaTray:
         t, _hud = tray
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
         assert texts[0] in ("隐藏悬浮窗", "显示悬浮窗")
+        assert texts.pop(1) == "找回悬浮窗"
+        assert texts.pop(1) == "所有工作区始终显示"
         assert texts[1] == "立即刷新"
         assert texts[2] == "开机自启"
         assert texts[3] == "复制手机访问地址"
@@ -119,7 +123,7 @@ class TestQuotaTray:
         hud._apply()
         # 校验真实菜单顺序（含分隔符过滤后）
         texts = [a.text() for a in t._menu.actions() if not a.isSeparator()]
-        assert texts == ["显示悬浮窗", "立即刷新", "开机自启", "复制手机访问地址",
+        assert texts == ["显示悬浮窗", "找回悬浮窗", "所有工作区始终显示", "立即刷新", "开机自启", "复制手机访问地址",
                          "推送访问地址到手机", "手机通知（ntfy）订阅指引",
                          "初始设置 / 环境自检", "打开日志目录", "管理额度来源", "告警阈值", "主模型显示",
                          "重置提醒", "显示内容",
@@ -144,6 +148,47 @@ class TestQuotaTray:
         t._toggle_hud()
         assert not hud.isVisible()
         assert t.action_toggle.text() == "显示悬浮窗"
+
+    def test_tray_recovery_keeps_toggle_connected(self, tray):
+        t, hud = tray
+        original = t.tray
+        for _ in range(3):
+            t._rebuild_tray()
+            QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+            t.update_state(hud._current_views())
+            assert t.tray is original
+            t.action_toggle.trigger()
+            assert hud.isVisible()
+            assert t.action_toggle.text() == "隐藏悬浮窗"
+            t.action_toggle.trigger()
+            assert not hud.isVisible()
+            assert t.action_toggle.text() == "显示悬浮窗"
+
+    def test_all_workspaces_still_allows_manual_hide(self, tray):
+        t, hud = tray
+        t.action_all_workspaces.setChecked(True)
+        assert hud._settings.get("all_workspaces") is True
+        assert hud.isVisible()
+        t.action_toggle.trigger()
+        QApplication.processEvents()
+        assert not hud.isVisible()
+        assert t.action_toggle.text() == "显示悬浮窗"
+        t.action_toggle.trigger()
+        assert hud.isVisible()
+        assert hud._settings.get("all_workspaces") is True
+
+    def test_restore_remains_available_when_qt_thinks_visible(self, tray, monkeypatch):
+        t, hud = tray
+        hud.show()
+        t._sync_toggle_text()
+        assert t.action_toggle.text() == "隐藏悬浮窗"
+        restored = []
+        monkeypatch.setattr(hud, "show_and_activate", lambda: restored.append(True))
+        assert t.action_restore in t._menu.actions()
+        assert t.action_restore.isEnabled()
+        t.action_restore.trigger()
+        assert restored == [True]
+        assert hud.isVisible()
 
     def test_icon_reflects_worst_remaining(self, tray):
         t, hud = tray

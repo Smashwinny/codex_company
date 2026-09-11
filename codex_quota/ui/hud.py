@@ -548,20 +548,29 @@ class FloatingHud(QWidget):
         QTimer.singleShot(0, self._move_to_active_workspace)
 
     def _move_to_active_workspace(self) -> None:
-        if (not sys.platform.startswith("linux")
+        if (not self.isVisible()
+                or not sys.platform.startswith("linux")
                 or not os.environ.get("DISPLAY")):
             return
         wmctrl = shutil.which("wmctrl")
         if wmctrl is None:
             return
         try:
-            desktops = subprocess.run(
-                [wmctrl, "-d"], check=False, capture_output=True,
-                text=True, timeout=2)
-            active = _active_workspace(desktops.stdout)
+            if self._settings.get("all_workspaces"):
+                active = -1  # EWMH: visible on every workspace.
+            else:
+                desktops = subprocess.run(
+                    [wmctrl, "-d"], check=False, capture_output=True,
+                    text=True, timeout=2)
+                active = _active_workspace(desktops.stdout)
             if active is None:
                 return
             window_id = hex(int(self.winId()))
+            if active != -1:
+                subprocess.run(
+                    [wmctrl, "-ir", window_id, "-b", "remove,sticky"],
+                    check=False, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=2)
             subprocess.run(
                 [wmctrl, "-ir", window_id, "-t", str(active)],
                 check=False, stdout=subprocess.DEVNULL,
@@ -570,8 +579,20 @@ class FloatingHud(QWidget):
                 [wmctrl, "-ia", window_id], check=False,
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=2)
+            if active == -1:
+                subprocess.run(
+                    [wmctrl, "-ir", window_id, "-b", "add,sticky"],
+                    check=False, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, timeout=2)
         except (OSError, subprocess.SubprocessError) as exc:
             logger.warning("恢复悬浮窗到当前工作区失败: %s", exc)
+
+    def set_all_workspaces(self, enabled: bool) -> None:
+        self._settings.set("all_workspaces", enabled)
+        if enabled:
+            self.show_and_activate()
+        elif self.isVisible():
+            self._move_to_active_workspace()
 
     def paintEvent(self, event) -> None:  # noqa: N802
         p = QPainter(self)
