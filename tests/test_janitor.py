@@ -5,7 +5,6 @@ from __future__ import annotations
 from codex_quota.janitor import (
     cleanup_orphans,
     is_our_cloudflared,
-    is_our_kimi_web,
 )
 from codex_quota.tunnel import RestartPolicy
 
@@ -42,24 +41,13 @@ class TestMatchers:
         assert is_our_cloudflared(["cloudflared", "tunnel", "run", "mytunnel"]) is False
         assert is_our_cloudflared([]) is False
 
-    def test_our_kimi_web(self):
-        assert is_our_kimi_web([
-            "/home/hulk/.kimi-code/bin/kimi", "web", "--port", "52651",
-            "--no-open"]) is True
-
-    def test_user_kimi_web_untouched(self):
-        # 用户手动 kimi web（无 --no-open）不杀
-        assert is_our_kimi_web(["kimi", "web", "--port", "3080"]) is False
-        assert is_our_kimi_web(["kimi"]) is False
-
-
 class TestCleanupOrphans:
-    def test_kills_only_ours(self):
+    def test_proc_scan_never_kills_kimi_web(self):
         procs = {
             100: ["/x/vendor/bin/cloudflared", "tunnel", "--url",
                   "http://127.0.0.1:8642", "--no-autoupdate"],
             101: ["kimi", "web", "--port", "52651", "--no-open"],
-            102: ["kimi", "web", "--port", "3080"],          # 用户的，不杀
+            102: ["kimi", "web", "--port", "58627", "--no-open"],
             103: ["chrome", "--some-flag"],                   # 无关进程
         }
         killed = []
@@ -68,8 +56,8 @@ class TestCleanupOrphans:
             read_cmdline=lambda pid: procs.get(pid),
             kill=killed.append,
         )
-        assert n == 2
-        assert sorted(killed) == [100, 101]
+        assert n == 1
+        assert killed == [100]
 
     def test_self_pid_skipped(self):
         import os

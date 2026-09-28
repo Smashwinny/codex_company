@@ -4,8 +4,9 @@ Windows / Linux 桌面端 AI 编程工具额度实时监控（**Codex + Kimi**�
 
 - **Codex 数据源**：本地 `codex app-server` 的只读 JSON-RPC 方法 `account/rateLimits/read`，
   不读取 `auth.json`、不接触登录凭证、网络零外发。
-- **Kimi 数据源**：本地 `kimi web` 服务器的只读接口 `GET /api/v1/oauth/usage`
-  （Bearer token 从其 stdout 解析，服务器随应用退出自动回收）。
+- **Kimi 数据源**：复用本机已有 `kimi web` 的只读接口 `GET /api/v1/oauth/usage`。
+  本应用不启动、不停止、不重启 Kimi Web，也不会执行 `kimi login`；Ubuntu 上由
+  `/home/hulk/stupid` 的 `kimi-code-web.service` 唯一负责生命周期。
 - **隐私**：所有数据仅保留在本机。
 
 > 设计调研与整体规划见 [DESIGN.md](DESIGN.md)。
@@ -70,6 +71,8 @@ Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\code
 
 已在运行时重复启动只会提示"已在运行"，不会开第二个实例。
 
+Kimi provider 扫描 `~/.kimi-code/server/instances/*.json`，使用120秒内的心跳并优先端口58627，随后按请求读取 `~/.kimi-code/server.token`。HTTP 401 时重新读取 token 并只重试一次；日志只记录端口、PID和HTTP状态，禁止输出 token。Linux 当前 owner 启动命令为 `/home/hulk/.kimi-code/bin/kimi web --no-open --port 58627`。
+
 **首次启动会弹出设置向导**：自动检测 Codex CLI（安装/登录）、Kimi、cloudflared，
 缺失项旁边直接给"复制命令"按钮，修好点"全部重新检测"即可，全程不用查文档。
 之后随时可从托盘菜单"初始设置 / 环境自检"重新打开。
@@ -95,10 +98,10 @@ Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\code
 
 ### 管理额度来源（providers）
 
-托盘菜单 → **管理额度来源**，无需编辑文件：
+悬浮窗标题栏 **＋（添加额度来源）**，或托盘菜单 → **管理额度来源 / Manage providers**，无需编辑文件：
 
 - **本地工具**（开关即可）：Codex、Kimi、Claude Code（自动读本地登录凭证）
-- **云端服务**（填 API key）：DeepSeek、OpenRouter——key 可填 `$环境变量` 引用，
+- **云端服务**（填 API key）：GLM (Z.ai)、DeepSeek、OpenRouter——key 可填 `$环境变量` 引用，
   点"测试连接"即时验证，保存即热重载（不用重启）
 - **手动余额**（免 key）：不想提供任何 key 时用——定期把网页上看到的余额
   手填进来，按余额型显示，"更新于 x 天前"的新鲜度会提醒你该更新了
@@ -117,6 +120,11 @@ Run 键（托盘菜单勾选即可，免管理员）。配置在 `%APPDATA%\code
 > 的 `~/.dsh/.credentials.yaml`**——装了 dsh 并配过 key 的话开箱即用，无需任何输入。
 
 配置文件为 `~/.config/codex-quota/providers.toml`（权限 600），也可手写：
+
+GLM (Z.ai) 使用国际版 Coding Plan 密钥，只读查询
+`https://api.z.ai/api/monitor/usage/quota/limit`，显示 5 小时、周与 MCP 月度额度。
+`https://api.z.ai/api/anthropic` 是模型调用入口，不用于查询额度；添加来源不会调用模型。
+托盘摘要刷新会复用菜单项，避免长期运行不断分配原生菜单编号。
 
 ```toml
 [providers.kimi]
@@ -142,6 +150,10 @@ api_key = "$OPENROUTER_API_KEY"
 3. 完成。此后 Codex/Kimi 任一窗口重置回满即推送，只在跳变时触发、不重复骚扰
 
 - 检测原理：每次刷新对比剩余量，从 <99.5% 跳到 ≥99.5% 视为重置
+- 可靠发送：重置事件先持久化到本地队列，ntfy 暂时不可达时后台自动重试；
+  应用重启后会继续补发，确认送达 ntfy 后才从队列删除
+- 开启通知后，即使悬浮窗隐藏，成功状态下也至少每 60s 检查一次；
+  全部数据源不可达时仍使用指数退避
 - 关闭：settings.json 设 `"notify_enabled": false`；换服务器：`ntfy_server`（可自建）
 - 主题即凭证，勿外传
 
@@ -239,3 +251,24 @@ Kimi（套餐: kimi-code/k3）
 ## License
 
 MIT
+
+
+### 手机远程指令
+
+向 ntfy 通知指引中的 **命令主题**（通知主题后加 `-cmd`）发送文本，
+电脑通过原通知主题回复。指令通道独立于 Cloudflare 隧道，电脑联网且程序运行时，
+即使仪表盘链接失效也能请求重连。
+
+- `url`：获取当前地址。
+- `urlrestartcmd`：手动重建公网隧道，完成后推送新地址，旧地址随之失效。
+  重复请求不会同时启动多个隧道；手动和自动重连合计 10 分钟最多 5 次。
+  新域名生效可能稍有延迟，重连失败会回复失败通知。
+- `列表`：同时查看各窗口的额度重置提醒状态和全部可用命令；
+  `help`：查看全部命令。输入无法识别的指令也会返回完整帮助。
+- `zai5 on` / `zai5 off`：开启 / 关闭 GLM 5 小时重置提醒。
+- `zai本周 on` / `zai本月 off`：按周 / 月窗口控制提醒。
+- `zai on` / `zai off`：开启 / 关闭 GLM 全部现有窗口提醒，`glm` 是 `zai` 的别名。
+- 不加 `on` / `off` 时切换状态，如 `zai5`；明确开关可以重复发送而不反转状态。
+
+这些开关只控制额度重置时的通知，不会重置平台额度。未取得额度数据的窗口不能操作。
+不增加公网健康轮询，仍保留原有的进程退出自动恢复；主机断网或程序退出时无法接收指令。

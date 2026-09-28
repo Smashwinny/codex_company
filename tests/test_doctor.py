@@ -17,7 +17,11 @@ def patch_finders(monkeypatch, codex=None, login=False, kimi=None, cloudflared=N
         monkeypatch.setattr("codex_quota.app_server.find_codex_bin", _raise)
     else:
         monkeypatch.setattr("codex_quota.app_server.find_codex_bin", lambda: codex)
+    monkeypatch.setattr("codex_quota.doctor._default_version",
+                        lambda _path: "codex-cli test")
     monkeypatch.setattr("codex_quota.app_server.is_logged_in", lambda: login)
+    monkeypatch.setattr("codex_quota.doctor._default_login_status",
+                        lambda _path: login)
     monkeypatch.setattr("codex_quota.providers.kimi.find_kimi_bin", lambda: kimi)
     monkeypatch.setattr("codex_quota.tunnel.find_cloudflared", lambda: cloudflared)
 
@@ -60,16 +64,24 @@ class TestRunChecks:
         assert by_key(items, "cloudflared").status == WARN
         assert not has_failures(items)  # WARN 不算失败
 
-    def test_version_failure_tolerated(self, monkeypatch):
+    def test_version_failure_is_not_reported_as_installed(self, monkeypatch):
         patch_finders(monkeypatch, codex="/bin/codex", login=True)
         items = run_checks(version_of=lambda p: None)
+        assert by_key(items, "codex_bin").status == FAIL
+
+    def test_existing_auth_with_failed_login_status_needs_login(self, monkeypatch):
+        patch_finders(monkeypatch, codex="/bin/codex", login=True)
+        items = run_checks(version_of=lambda p: "codex-cli 1.0",
+                           login_status_of=lambda p: False)
         assert by_key(items, "codex_bin").status == OK
+        assert by_key(items, "codex_login").status == FAIL
 
 
 def test_default_version_hides_console_on_windows(monkeypatch):
     captured = {}
 
     class Result:
+        returncode = 0
         stdout = "codex-cli 1.2.3\n"
         stderr = ""
 
@@ -85,3 +97,14 @@ def test_default_version_hides_console_on_windows(monkeypatch):
     assert doctor._default_version(r"C:\npm\codex.cmd") == "codex-cli 1.2.3"
     assert captured["argv"][:2] == ["cmd.exe", "/c"]
     assert captured["kwargs"]["creationflags"] & 0x08000000
+
+
+def test_default_version_rejects_nonzero_exit(monkeypatch):
+    class Result:
+        returncode = 1
+        stdout = ""
+        stderr = "Access is denied"
+
+    monkeypatch.setattr("codex_quota.proc.run_external",
+                        lambda *_a, **_k: Result())
+    assert doctor._default_version("codex.exe") is None

@@ -325,6 +325,7 @@ class TestCodexBinOverride:
         good = tmp_path / "npm" / "codex.cmd"
         good.parent.mkdir(parents=True)
         good.write_text("@echo off\n")
+        good.chmod(0o755)  # POSIX 的 _usable 检查执行位
         monkeypatch.setattr(app_server.shutil, "which", lambda _n: str(good))
         assert find_codex_bin() == str(good)
 
@@ -367,3 +368,89 @@ class TestCodexBinOverride:
         (fake_dir / "codex.exe").write_text("MZ")
         monkeypatch.setenv("PATH", str(fake_dir))
         assert find_codex_bin() == str(fake_dir / "codex.exe")
+
+
+@pytest.fixture(autouse=True)
+def _reset_codex_bin_cache():
+    """find_codex_bin 有全局缓存/黑名单，每个测试前重置防串扰。"""
+    from codex_quota import app_server as _as
+
+    _as._resolved_bin = None
+    _as._blacklisted_bins.clear()
+    yield
+    _as._resolved_bin = None
+    _as._blacklisted_bins.clear()
+
+
+class TestCodexBinBlacklist:
+    def test_spawn_failure_blacklists_and_falls_to_next(self, monkeypatch,
+                                                        tmp_path):
+        """首个候选 spawn 失败被拉黑后，自动切换到下一个候选。"""
+        from codex_quota import app_server
+        from codex_quota.app_server import find_codex_bin, invalidate_codex_bin
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setenv("PATH", "")
+        local = tmp_path / "local"
+        bad = local / "Microsoft" / "WindowsApps" / "codex.exe"
+        good = local / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"
+        bad.parent.mkdir(parents=True)
+        good.parent.mkdir(parents=True)
+        bad.write_text("MZ")   # 别名（模拟能找到但跑不起来的 shim）
+        good.write_text("MZ")
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+        assert find_codex_bin() == str(bad)      # 先命中别名
+        invalidate_codex_bin(str(bad))           # spawn 失败 → 拉黑
+        assert find_codex_bin() == str(good)     # 自动切到下一个候选
+
+    def test_cache_returns_resolved(self, monkeypatch, tmp_path):
+        from codex_quota import app_server
+        from codex_quota.app_server import find_codex_bin
+
+        monkeypatch.delenv("CODEX_BIN", raising=False)
+        monkeypatch.setattr("shutil.which", lambda _n: "/usr/bin/codex")
+        first = find_codex_bin()
+        monkeypatch.setattr("shutil.which", lambda _n: None)
+        assert find_codex_bin() == first  # 缓存，不重新发现
+
+    def test_read_retries_next_candidate_in_same_request(self, monkeypatch):
+        """WindowsApps shim spawn 失败后，本次查询立即改试真 CLI。"""
+        import io
+
+        from codex_quota import app_server, proc
+        from codex_quota.app_server import AppServerClient
+
+        monkeypatch.setattr(app_server.sys, "platform", "win32")
+        monkeypatch.setattr(proc.sys, "platform", "win32")
+        monkeypatch.setattr(proc, "IS_WINDOWS", True)
+        candidates = iter([r"C:\npm\codex.cmd"])
+        monkeypatch.setattr(app_server, "find_codex_bin", lambda: next(candidates))
+
+        class FakeProc:
+            stdin = io.StringIO()
+            stdout = []
+
+            @staticmethod
+            def poll():
+                return 0
+
+        calls = []
+
+        def fake_popen(argv, **kwargs):
+            calls.append(argv)
+            if len(calls) == 1:
+                raise PermissionError(5, "Access is denied")
+            return FakeProc()
+
+        monkeypatch.setattr(proc, "popen_external", fake_popen)
+        client = AppServerClient(codex_bin=r"C:\WindowsApps\codex.exe")
+        monkeypatch.setattr(client, "_await_response", lambda *_a, **_k: {
+            "result": {"rateLimits": {"primary": {}}}
+        })
+
+        snapshot = client.read_rate_limits()
+        assert snapshot.provider == "codex"
+        assert len(calls) == 2
+        assert calls[1][:2] == ["cmd.exe", "/c"]

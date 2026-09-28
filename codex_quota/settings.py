@@ -20,6 +20,7 @@ def default_settings_path() -> str:
 DEFAULTS: dict[str, Any] = {
     "opacity": 1.0,        # 窗口透明度 0.3–1.0
     "compact": False,      # 紧凑模式：只显示主限额行
+    "all_workspaces": False,  # 在所有工作区显示；仍允许手动隐藏
     "pos": None,           # 窗口位置记忆 [x, y]
     "web_enabled": True,   # 手机访问（局域网 Web 服务）
     "web_port": 8642,      # Web 服务起始端口（冲突自动递增）
@@ -29,10 +30,12 @@ DEFAULTS: dict[str, Any] = {
     "ntfy_server": "https://ntfy.sh",
     "ntfy_topic": None,      # ntfy 订阅主题，首次运行生成后持久化（主题即凭证）
     "wizard_done": False,    # 首启向导是否已完成
+    "codex_setup_snoozed": False,  # 客户选择暂不使用 Codex，不再强制弹向导
     "color_warn_threshold": 30,  # 黄线：剩余量 ≤ 此百分比显示黄色
     "color_crit_threshold": 10,  # 红线：剩余量 ≤ 此百分比显示红色
     "tray_color_excludes": [],   # 不参与托盘取色的额度桶 ["provider:桶名", ...]
     "notify_excludes": [],       # 不发送重置推送的额度桶 ["provider:桶名", ...]
+    "hud_hidden": [],            # 悬浮窗不显示的额度项 ["provider:桶:窗口", ...]
 }
 
 

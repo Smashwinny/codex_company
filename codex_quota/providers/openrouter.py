@@ -17,6 +17,7 @@ import urllib.request
 from typing import Any, Optional
 
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
+from ..net import https_context
 from .config import resolve_secret
 
 CREDITS_URL = "https://openrouter.ai/api/v1/credits"
@@ -67,7 +68,7 @@ class OpenRouterProvider:
             headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout, context=https_context()) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code == 401:

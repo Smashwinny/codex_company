@@ -13,17 +13,23 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import os
 import threading
 import time
 import urllib.request
+import uuid
 from collections import deque
 from typing import Callable, Optional
 
 from .app_server import QuotaSnapshot
+from .net import https_context
 from .state import key_excluded
+from .sysdirs import cache_dir
 
 RESET_THRESHOLD = 99.5  # 剩余量跨过此线视为"重置回满"
 DEFAULT_NTFY_SERVER = "https://ntfy.sh"
+OUTBOX_NAME = "notify-outbox.json"
+RETRY_DELAYS_S = (5, 15, 30, 60, 120, 300)
 
 
 class ResetWatcher:
@@ -60,13 +66,22 @@ class ResetWatcher:
 
 
 class NtfyNotifier:
-    """ntfy 发布端。推送失败静默返回 False（通知不是关键路径）。"""
+    """ntfy 发布端；重要通知可先持久入队后异步重试。"""
 
     def __init__(self, server: str = DEFAULT_NTFY_SERVER, topic: str = "",
-                 timeout: float = 8.0):
+                 timeout: float = 8.0, *, outbox_path: Optional[str] = None,
+                 retry_delays: tuple[float, ...] = RETRY_DELAYS_S):
         self.server = server.rstrip("/")
         self.topic = topic
         self.timeout = timeout
+        self._outbox_path = outbox_path or os.path.join(cache_dir(), OUTBOX_NAME)
+        self._retry_delays = retry_delays or RETRY_DELAYS_S
+        self._outbox_lock = threading.RLock()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._worker: Optional[threading.Thread] = None
+        if self._load_outbox():
+            self._ensure_worker()  # 上次退出/休眠前未发出的事件继续补发
 
     @property
     def subscribe_url(self) -> str:
@@ -93,10 +108,125 @@ class NtfyNotifier:
             headers=headers,
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=https_context()) as resp:
                 return resp.status == 200
-        except Exception:
+        except Exception as exc:
+            logging.getLogger("codex_quota.notify").warning(
+                "ntfy 发送失败: %s", exc)
             return False
+
+    def enqueue(self, key: str, title: str, body: str, *,
+                priority: str = "urgent", tags: str = "white_check_mark",
+                click: str = "", detected_at: Optional[float] = None) -> bool:
+        """持久化后立即返回；后台发送失败会重试，不阻塞 Qt 主线程。"""
+        if not self.topic:
+            return False
+        detected = detected_at if detected_at is not None else time.time()
+        with self._outbox_lock:
+            items = self._load_outbox()
+            if not any(item.get("key") == key for item in items):
+                items.append({
+                    "id": uuid.uuid4().hex,
+                    "key": key,
+                    "title": title,
+                    "body": body,
+                    "priority": priority,
+                    "tags": tags,
+                    "click": click,
+                    "detected_at": detected,
+                    "attempt": 0,
+                    "next_try": 0.0,
+                })
+                if not self._save_outbox(items):
+                    return False
+                logging.getLogger("codex_quota.notify").info(
+                    "重置通知已入队 key=%s detected_at=%s", key,
+                    dt.datetime.fromtimestamp(detected).isoformat(timespec="seconds"))
+        self._ensure_worker()
+        self._wake.set()
+        return True
+
+    def close(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._worker is not None:
+            self._worker.join(timeout=max(3.0, self.timeout + 1.0))
+
+    def _load_outbox(self) -> list[dict]:
+        try:
+            with open(self._outbox_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            return raw if isinstance(raw, list) else []
+        except (OSError, ValueError):
+            return []
+
+    def _save_outbox(self, items: list[dict]) -> bool:
+        try:
+            parent = os.path.dirname(self._outbox_path)
+            os.makedirs(parent, exist_ok=True)
+            tmp = self._outbox_path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(items, f, ensure_ascii=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._outbox_path)
+            return True
+        except OSError as exc:
+            logging.getLogger("codex_quota.notify").warning(
+                "通知队列持久化失败: %s", exc)
+            return False
+
+    def _ensure_worker(self) -> None:
+        with self._outbox_lock:
+            if self._worker is not None and self._worker.is_alive():
+                return
+            self._stop.clear()
+            self._worker = threading.Thread(
+                target=self._run_outbox, daemon=True, name="ntfy-outbox")
+            self._worker.start()
+
+    def _run_outbox(self) -> None:
+        log = logging.getLogger("codex_quota.notify")
+        while not self._stop.is_set():
+            with self._outbox_lock:
+                items = self._load_outbox()
+                now = time.time()
+                due = next((dict(item) for item in items
+                            if float(item.get("next_try", 0)) <= now), None)
+                next_due = min((float(item.get("next_try", 0)) for item in items),
+                               default=now + 300)
+            if due is None:
+                self._wake.wait(max(0.1, min(300.0, next_due - time.time())))
+                self._wake.clear()
+                continue
+
+            ok = self.publish(
+                str(due.get("title", "codex-quota")), str(due.get("body", "")),
+                priority=str(due.get("priority", "urgent")),
+                tags=str(due.get("tags", "white_check_mark")),
+                click=str(due.get("click", "")))
+            with self._outbox_lock:
+                items = self._load_outbox()
+                current = next((item for item in items
+                                if item.get("id") == due.get("id")), None)
+                if current is None:
+                    continue
+                if ok:
+                    items.remove(current)
+                    self._save_outbox(items)
+                    delay = max(0.0, time.time() - float(current.get("detected_at", time.time())))
+                    log.info("重置通知已送达 ntfy key=%s delay=%.1fs attempts=%s",
+                             current.get("key"), delay,
+                             int(current.get("attempt", 0)) + 1)
+                else:
+                    attempt = int(current.get("attempt", 0)) + 1
+                    current["attempt"] = attempt
+                    delay = self._retry_delays[min(attempt - 1,
+                                                   len(self._retry_delays) - 1)]
+                    current["next_try"] = time.time() + delay
+                    self._save_outbox(items)
+                    log.warning("重置通知尚未送达 key=%s attempt=%d retry_in=%.0fs",
+                                current.get("key"), attempt, delay)
 
 
 def _ascii_title(display_name: str) -> str:
@@ -140,11 +270,34 @@ def notify_resets(notifier: Optional[NtfyNotifier], watcher: ResetWatcher,
         for event in events:
             when = _actual_reset_text(snap, event)
             detail = f"{event} · 重置于 {when}" if when else event
-            notifier.publish(
-                _ascii_title(display_name),
-                f"✅ {display_name} 额度已重置回 100%（{detail}）",
-            )
+            title = _ascii_title(display_name)
+            body = f"✅ {display_name} 额度已重置回 100%（{detail}）"
+            actual = _actual_reset_epoch(snap, event)
+            key = f"{provider}:{event}:{int(actual or snap.fetched_at)}"
+            enqueue = getattr(notifier, "enqueue", None)
+            if callable(enqueue):
+                if not enqueue(key, title, body, detected_at=time.time()):
+                    # 磁盘只读/满等导致队列无法落盘时，仍尝试直接发送。
+                    notifier.publish(title, body)
+            else:  # 保持第三方/测试 notifier 的简单 publish 契约
+                notifier.publish(title, body)
     return events
+
+
+def _actual_reset_epoch(snap: QuotaSnapshot, event: str) -> Optional[float]:
+    """返回可信的实际重置时刻，用于持久队列去重。"""
+    now = time.time()
+    for limit in snap.limits:
+        bucket = limit.limit_name or limit.limit_id
+        for w in (limit.primary, limit.secondary):
+            if w is None or w.reset_at is None or not w.window_minutes:
+                continue
+            if event not in (w.label, f"{bucket} · {w.label}"):
+                continue
+            actual = w.reset_at - w.window_minutes * 60
+            if 0 <= now - actual < w.window_minutes * 60:
+                return actual
+    return None
 
 
 class NtfyCommandListener:
@@ -195,7 +348,7 @@ class NtfyCommandListener:
             try:
                 req = urllib.request.Request(
                     f"{self.server}/{self.topic}/json?since={self._since}")
-                with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                with urllib.request.urlopen(req, timeout=self._timeout, context=https_context()) as resp:
                     self._resp = resp
                     backoff = 2.0  # 连上即重置退避
                     failed = False

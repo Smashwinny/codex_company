@@ -8,7 +8,8 @@
 - record_child / sweep_pidfile：spawn 的保活子进程（kimi web / cloudflared）
   记 PID 到 cache_dir()/children.pid，下次启动按此回收——Windows 无 /proc
   可扫，pidfile 是唯一不引入 psutil/WMI 依赖的回收途径；POSIX 下作为
-  janitor /proc 扫描之外的叠加保障（幂等）。
+  cloudflared 的 janitor /proc 扫描之外的叠加保障；Kimi Web 则只允许
+  通过这里记录的 PID 回收，避免误杀外部共享实例（幂等）。
 - wrap_cmd_shim：npm 全局安装的 codex/kimi 在 Windows 是 .cmd shim，
   CreateProcess 不能直接执行批处理（WinError 193），统一包 cmd.exe /c。
 """

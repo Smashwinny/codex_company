@@ -98,14 +98,15 @@ class Tunnel:
         self._proc.stderr.reconfigure(encoding="utf-8", errors="replace")
         lines: queue.Queue[str] = queue.Queue()
 
+        process = self._proc
+
         def _pump() -> None:
-            assert self._proc is not None and self._proc.stderr is not None
-            for line in self._proc.stderr:
+            # 重连时 self._proc 会替换；旧 reader 必须始终读取旧进程。
+            for line in process.stderr:
                 if " ERR " in line or line.startswith("ERR"):
                     logger.warning("cloudflared: %s", line.strip())
                 lines.put(line)
-            # stderr 关闭 = 进程退出；若非主动 stop，说明隧道意外断了
-            if self._proc is not None:
+            if self._proc is process:
                 logger.warning("cloudflared 进程意外退出，公网地址已失效")
 
         threading.Thread(target=_pump, daemon=True).start()

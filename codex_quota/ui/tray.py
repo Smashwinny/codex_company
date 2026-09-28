@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QObject
+from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
@@ -139,6 +139,14 @@ class QuotaTray(QObject):
 
         self.action_toggle = QAction(tr("显示悬浮窗"), self)
         self.action_toggle.triggered.connect(self._toggle_hud)
+        # Qt visibility stays true on another workspace or after WM minimization.
+        # Keep a recovery action available independently of that flag.
+        self.action_restore = QAction(tr("找回悬浮窗"), self)
+        self.action_restore.triggered.connect(self._restore_hud)
+        self.action_all_workspaces = QAction(tr("所有工作区始终显示"), self)
+        self.action_all_workspaces.setCheckable(True)
+        self.action_all_workspaces.setChecked(bool(hud._settings.get("all_workspaces")))
+        self.action_all_workspaces.toggled.connect(hud.set_all_workspaces)
         self.action_refresh = QAction(tr("立即刷新"), self)
         self.action_refresh.triggered.connect(self._hud.refresh)
         self.action_autostart = QAction(tr("开机自启"), self)
@@ -186,11 +194,16 @@ class QuotaTray(QObject):
         self._notify_checks = ChecklistMenu(
             tr("重置提醒"), tr("勾选的额度桶回满 100% 时推送手机通知"),
             self, self._toggle_notify_bucket)
+        self._hud_checks = ChecklistMenu(
+            tr("显示内容"), tr("勾选的额度项显示在悬浮窗里"),
+            self, self._toggle_hud_visible)
         self.action_quit = QAction(tr("退出"), self)
         self.action_quit.triggered.connect(self._app.quit)
 
         self._menu = QMenu()
         self._menu.addAction(self.action_toggle)
+        self._menu.addAction(self.action_restore)
+        self._menu.addAction(self.action_all_workspaces)
         self._menu.addAction(self.action_refresh)
         self._menu.addAction(self.action_autostart)
         self._menu.addAction(self.action_phone)
@@ -202,6 +215,7 @@ class QuotaTray(QObject):
         self._menu.addMenu(self._thresh_menu)
         self._menu.addMenu(self._color_checks.menu)
         self._menu.addMenu(self._notify_checks.menu)
+        self._menu.addMenu(self._hud_checks.menu)
         self._menu.addSeparator()
         self._summary_anchor = self._menu.addSeparator()  # 摘要行插入到此锚点之前
         self._summary_actions: list[QAction] = []
@@ -215,8 +229,54 @@ class QuotaTray(QObject):
         self.update_state(hud._current_views())
         self._sync_toggle_text()
 
+        # 托盘丢失看门狗：GNOME Shell 重启/崩溃后 SNI 托盘会消失且 Qt 不一定
+        # 重新注册——届时悬浮窗若处于隐藏态，用户将彻底失去控制入口（实测踩到）。
+        # 丢失即显示悬浮窗保底；恢复时重建图标。
+        self._tray_visible = True
+        self._tray_watchdog = QTimer(self)
+        self._tray_watchdog.setInterval(30_000)
+        self._tray_watchdog.timeout.connect(self._check_tray_alive)
+        self._tray_watchdog.start()
+
     def show(self) -> None:
         self.tray.show()
+
+    # ---------- 托盘存活 ----------
+
+    def _check_tray_alive(self) -> None:
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            if not self._tray_visible:
+                self._rebuild_tray()
+            return
+        if self._tray_visible:  # 只在"曾经有、现在没了"的跳变时动作一次
+            self._tray_visible = False
+            logging.getLogger("codex_quota.tray").warning(
+                "系统托盘消失（Shell 重启？），显示悬浮窗保底可控")
+            self._hud.show_and_activate()
+
+    def _rebuild_tray(self) -> None:
+        # Recreate the native menu items as well as the tray registration.
+        # Reusing the old exported menu can leave labels intact but its D-Bus
+        # action IDs unresponsive after registration has been replaced.
+        self.tray.hide()
+        self.tray.setContextMenu(None)
+        old_menu = self._menu
+        actions = old_menu.actions()
+        self._menu = QMenu()
+        for action in actions:
+            if action.parent() is old_menu:
+                action.setParent(self._menu)
+            old_menu.removeAction(action)
+        for action in actions:
+            self._menu.addAction(action)
+        self._menu.aboutToShow.connect(self._sync_toggle_text)
+        self.tray.setContextMenu(self._menu)
+        old_menu.deleteLater()
+        self.tray.show()
+        self.update_state(self._hud._current_views())
+        self._sync_toggle_text()
+        self._tray_visible = True
+        logging.getLogger("codex_quota.tray").info("系统托盘恢复，图标已重建")
 
     # ---------- 状态更新 ----------
 
@@ -230,6 +290,8 @@ class QuotaTray(QObject):
         self._color_checks.sync(items, set(excludes))
         self._notify_checks.sync(
             items, set(self._hud._settings.get("notify_excludes") or []))
+        self._hud_checks.sync(
+            items, set(self._hud._settings.get("hud_hidden") or []))
 
         lines = summary_lines(views)
         tip = f"{tr('⚡ 额度监控')} v{__version__}\n" + "\n".join(lines)
@@ -241,15 +303,20 @@ class QuotaTray(QObject):
         self._rebuild_summary(lines)
 
     def _rebuild_summary(self, lines: list[str]) -> None:
-        for a in self._summary_actions:
+        # Keep native D-Bus IDs stable during routine quota refreshes. Replacing
+        # every QAction forever exhausts the platform menu's finite ID space.
+        while len(self._summary_actions) > len(lines):
+            a = self._summary_actions.pop()
             self._menu.removeAction(a)
-            a.deleteLater()  # removeAction 不释放对象，防累积
-        self._summary_actions = []
-        for line in lines:  # 依次插到锚点前，保持传入顺序
-            item = QAction(line, self)
+            a.deleteLater()
+        while len(self._summary_actions) < len(lines):
+            item = QAction(self)
             item.setEnabled(False)
             self._menu.insertAction(self._summary_anchor, item)
             self._summary_actions.append(item)
+        for item, line in zip(self._summary_actions, lines):
+            if item.text() != line:
+                item.setText(line)
 
     # ---------- 交互 ----------
 
@@ -283,6 +350,13 @@ class QuotaTray(QObject):
               sorted(toggle_window(s.get("notify_excludes") or [], key, all_keys)))
         # 无视觉变化，不用刷图标；下次检测回满时即按新集合生效
 
+    def _toggle_hud_visible(self, key: str) -> None:
+        s = self._hud._settings
+        all_keys = [k for k, _ in window_keys(self._hud._current_views())]
+        s.set("hud_hidden",
+              sorted(toggle_window(s.get("hud_hidden") or [], key, all_keys)))
+        self._hud._apply()  # 立即重渲染
+
     def _sync_toggle_text(self) -> None:
         self.action_toggle.setText(tr("隐藏悬浮窗") if self._hud.isVisible()
                                    else tr("显示悬浮窗"))
@@ -291,8 +365,11 @@ class QuotaTray(QObject):
         if self._hud.isVisible():
             self._hud.hide()
         else:
-            self._hud.show()
-            self._hud.raise_()
+            self._hud.show_and_activate()
+        self._sync_toggle_text()
+
+    def _restore_hud(self) -> None:
+        self._hud.show_and_activate()
         self._sync_toggle_text()
 
     def _toggle_autostart(self, checked: bool) -> None:
@@ -366,9 +443,7 @@ class QuotaTray(QObject):
         QDesktopServices.openUrl(QUrl.fromLocalFile(cache_dir()))
 
     def _open_providers(self) -> None:
-        from .providers_dialog import ProvidersDialog
-
-        ProvidersDialog(self._hud, parent=self._hud).exec()
+        self._hud.open_providers()
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

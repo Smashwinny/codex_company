@@ -37,33 +37,67 @@ def _default_version(bin_path: str) -> Optional[str]:
         out = run_external(wrap_cmd_shim([bin_path, "--version"]),
                            capture_output=True, text=True, timeout=5,
                            **hidden_console_kwargs())
+        if out.returncode != 0:
+            return None
         lines = (out.stdout or out.stderr).strip().splitlines()
         return lines[0].strip() if lines else None
     except Exception:
         return None
 
 
-def run_checks(version_of: Callable[[str], Optional[str]] = _default_version
+def _default_login_status(bin_path: str) -> bool:
+    """用 CLI 自己的登录状态命令验证凭证，而不是只看 auth.json 存在。"""
+    try:
+        from .proc import hidden_console_kwargs, run_external, wrap_cmd_shim
+
+        out = run_external(wrap_cmd_shim([bin_path, "login", "status"]),
+                           capture_output=True, text=True, timeout=8,
+                           **hidden_console_kwargs())
+        return out.returncode == 0
+    except Exception:
+        return False
+
+
+def run_checks(version_of: Optional[Callable[[str], Optional[str]]] = None,
+               login_status_of: Optional[Callable[[str], bool]] = None
                ) -> list[CheckItem]:
-    from .app_server import CodexNotFoundError, find_codex_bin, is_logged_in
+    from .app_server import (CodexNotFoundError, find_codex_bin,
+                             invalidate_codex_bin, is_logged_in)
     from .providers.kimi import find_kimi_bin
     from .tunnel import find_cloudflared
 
     items: list[CheckItem] = []
 
     # --- Codex CLI（必需） ---
-    try:
-        codex = find_codex_bin()
-        ver = version_of(codex) or "?"
+    version_of = version_of or _default_version
+    login_status_of = login_status_of or _default_login_status
+    codex = None
+    ver = None
+    # WindowsApps 别名可能“存在但不可执行”。逐个验证候选，
+    # 不把 --version 执行失败的 shim 标成绿色已安装。
+    for _ in range(8):
+        try:
+            candidate = find_codex_bin()
+        except CodexNotFoundError:
+            break
+        candidate_ver = version_of(candidate)
+        if candidate_ver:
+            codex, ver = candidate, candidate_ver
+            break
+        if sys.platform != "win32":
+            break
+        invalidate_codex_bin(candidate)
+
+    if codex is not None:
         items.append(CheckItem("codex_bin", "Codex CLI", True, OK,
                                tr("已安装（{v}）").format(v=ver)))
-        if is_logged_in():
+        if is_logged_in() and login_status_of(codex):
             items.append(CheckItem("codex_login", tr("Codex 登录"), True, OK,
                                    tr("已登录")))
         else:
             items.append(CheckItem("codex_login", tr("Codex 登录"), True, FAIL,
-                                   tr("未登录"), "codex login"))
-    except CodexNotFoundError:
+                                   tr("未登录或登录已失效"), "codex login"))
+    else:
         # Windows 上 npm 全局目录可能不在 PATH（或独立安装包装到非常规位置），
         # 给出环境变量兜底指引；Linux/mac 保持安装指引
         if sys.platform == "win32":

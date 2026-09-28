@@ -20,6 +20,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from ..app_server import QuotaSnapshot, QuotaWindow, RateLimit
+from ..net import https_context
 
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 ANTHROPIC_BETA = "oauth-2025-04-20"
@@ -114,7 +115,7 @@ class ClaudeCodeProvider:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self._timeout, context=https_context()) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code == 401:

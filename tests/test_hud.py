@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 
 from codex_quota.app_server import parse_rate_limits_response
 from codex_quota.state import StateStore
-from codex_quota.ui.hud import FloatingHud, _countdown_text
+from codex_quota.ui.hud import FloatingHud, _active_workspace, _countdown_text
 from codex_quota.ui.widgets import QuotaBar, threshold_color
 from tests.conftest import FakeProvider, codex_snapshot
 from tests.test_parse import NOW, REAL_RESPONSE
@@ -42,6 +42,18 @@ class TestHudSmoke:
     def test_initial_state(self, hud):
         assert "额度监控" in hud._title.text()
 
+    def test_add_provider_button_opens_dialog(self, hud, monkeypatch):
+        from codex_quota.ui import providers_dialog
+        opened = []
+        class Dialog:
+            def __init__(self, owner, parent):
+                assert owner is hud and parent is hud
+            def exec(self):
+                opened.append(True)
+        monkeypatch.setattr(providers_dialog, "ProvidersDialog", Dialog)
+        hud._providers_btn.click()
+        assert opened == [True]
+
     def test_apply_snapshot(self, hud):
         hud._stores["codex"].on_success(snap())
         hud._apply()
@@ -54,6 +66,24 @@ class TestHudSmoke:
         assert len(hud._fresh_labels) == 1
         assert "更新于" in hud._fresh_labels[0][0].text()
         assert hud._footer.isHidden()  # 有数据时全局页脚隐藏
+
+    def test_hidden_windows_not_rendered(self, hud):
+        """显示内容开关：hud_hidden 里的窗口不渲染，整桶隐藏连分隔线都没有。"""
+        hud._stores["codex"].on_success(snap())
+        hud._apply()
+        assert len(hud._rows) == 2  # 主限额 + Spark
+
+        # 隐藏 Spark 桶（桶级前缀）：只剩主限额一行
+        hud._settings.set("hud_hidden", ["codex:GPT-5.3-Codex-Spark"])
+        hud._apply()
+        assert len(hud._rows) == 1
+        assert "Spark" not in "".join(
+            h.text() for h in hud._section_headers)  # 桶分隔线也没了
+
+        # 恢复
+        hud._settings.set("hud_hidden", [])
+        hud._apply()
+        assert len(hud._rows) == 2
 
     def test_error_without_history(self, hud):
         hud._stores["codex"].on_error("app-server 响应超时（8 秒）")
@@ -119,6 +149,46 @@ class TestHudSmoke:
 
         assert _short("abc", 10) == "abc"
         assert _short("x" * 200, 120) == "x" * 119 + "…"
+
+    def test_active_workspace_parser(self):
+        output = "0  - DG: 4480x1440\n1  * DG: 4480x1440\n"
+        assert _active_workspace(output) == 1
+        assert _active_workspace("0  - DG: 1x1\n") is None
+
+    def test_show_and_activate_restores_hidden_window(self, hud, monkeypatch):
+        moved = []
+        monkeypatch.setattr(hud, "_move_to_active_workspace",
+                            lambda: moved.append(True))
+        hud.hide()
+        hud.show_and_activate()
+        QApplication.processEvents()
+        assert hud.isVisible()
+        assert not hud.isMinimized()
+        assert moved == [True]
+
+    def test_workspace_setting_selects_all_or_current(self, hud, monkeypatch):
+        from types import SimpleNamespace
+        from codex_quota.ui import hud as module
+        monkeypatch.setattr(module.sys, "platform", "linux")
+        monkeypatch.setenv("DISPLAY", ":1")
+        monkeypatch.setattr(module.shutil, "which", lambda _: "/usr/bin/wmctrl")
+        calls = []
+        def run(args, **kwargs):
+            calls.append(args)
+            return SimpleNamespace(stdout="0 - DG: 4480x1440\n1 * DG: 4480x1440\n")
+        monkeypatch.setattr(module.subprocess, "run", run)
+        hud.set_all_workspaces(True)
+        QApplication.processEvents()
+        assert any(args[-2:] == ["-t", "-1"] for args in calls)
+        calls.clear()
+        hud.set_all_workspaces(False)
+        QApplication.processEvents()
+        assert any(args[-2:] == ["-t", "1"] for args in calls)
+        calls.clear()
+        hud.show_and_activate()
+        hud.hide()
+        QApplication.processEvents()
+        assert calls == []  # queued activation must not undo a user's Hide
 
 
 class TestWidgets:
@@ -225,6 +295,13 @@ class TestInteractions:
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         live_hud.refresh()
         assert len(live_hud._rows) == 2
+
+    def test_notifications_cap_hidden_success_poll_at_60s(self, live_hud):
+        live_hud.notifier = object()
+        live_hud._scheduler.set_visible(False)
+        live_hud._any_success = True
+        live_hud._on_fetch_done()
+        assert live_hud._refresh_timer.interval() == 60_000
 
     def test_close_button_hides(self, live_hud):
         live_hud.show()

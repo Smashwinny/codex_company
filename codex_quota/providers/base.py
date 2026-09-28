@@ -36,6 +36,7 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     from .deepseek import DeepSeekProvider, read_dsh_api_key
     from .kimi import KimiProvider, find_kimi_bin
     from .openrouter import OpenRouterProvider
+    from .zai import ZaiProvider
 
     cfg = load_providers_config(config_path)
 
@@ -49,7 +50,8 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     if enabled("claude") and (credentials_path() is not None
                               or cfg.get("claude", {}).get("type") == "claude"):
         providers.append(ClaudeCodeProvider())
-    if enabled("kimi") and find_kimi_bin() is not None:
+    if enabled("kimi") and (find_kimi_bin() is not None
+                            or os.path.isdir(os.path.expanduser("~/.kimi-code/server/instances"))):
         providers.append(KimiProvider())
 
     # 配置中的密钥型预设 provider
@@ -65,6 +67,11 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
             providers.append(OpenRouterProvider(
                 api_key=section.get("api_key"),
                 display_name=section.get("display_name") or "OpenRouter",
+            ))
+        elif section.get("type") == "zai":
+            providers.append(ZaiProvider(
+                api_key=section.get("api_key"),
+                display_name=section.get("display_name") or "GLM (Z.ai)",
             ))
         elif section.get("type") == "manual":
             from .manual import ManualProvider

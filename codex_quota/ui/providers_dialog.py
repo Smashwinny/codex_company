@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -28,11 +29,13 @@ from ..i18n import tr
 from ..providers.config import load_providers_config, save_providers_config
 from ..providers.deepseek import DeepSeekProvider, read_dsh_api_key
 from ..providers.openrouter import OpenRouterProvider
+from ..providers.zai import ZaiProvider
 from ..state import StateStore
 from .theme import DIALOG_STYLE, FG_DIM, style_section
 
 # 密钥型 provider 声明：新增同类服务在此处加一行 + base.py 装配一行
 KEY_PROVIDER_SPECS = [
+    {"type": "zai", "label": "GLM (Z.ai)", "cls": ZaiProvider},
     {"type": "deepseek", "label": "DeepSeek", "cls": DeepSeekProvider},
     {"type": "openrouter", "label": "OpenRouter", "cls": OpenRouterProvider},
 ]
@@ -122,7 +125,16 @@ class ProvidersDialog(QDialog):
         self._hud = hud
 
         cfg = load_providers_config()
-        lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: #0d1117; border: none; }")
+        content = QWidget()
+        content.setObjectName("providersContent")
+        content.setStyleSheet("QWidget#providersContent { background: #0d1117; }")
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        lay = QVBoxLayout(content)
 
         # --- 本地 provider 开关 ---
         local_label = QLabel(style_section(tr("本地工具")))
@@ -219,8 +231,10 @@ class ProvidersDialog(QDialog):
         save.clicked.connect(self._save)
         btns.addWidget(cancel)
         btns.addWidget(save)
-        lay.addLayout(btns)
+        outer.addLayout(btns)
         self.adjustSize()
+        available = self.screen().availableGeometry()
+        self.resize(560, min(760, max(240, available.height() - 60)))
 
     # ---------- 保存 ----------
 
