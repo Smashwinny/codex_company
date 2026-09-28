@@ -303,15 +303,20 @@ class QuotaTray(QObject):
         self._rebuild_summary(lines)
 
     def _rebuild_summary(self, lines: list[str]) -> None:
-        for a in self._summary_actions:
+        # Keep native D-Bus IDs stable during routine quota refreshes. Replacing
+        # every QAction forever exhausts the platform menu's finite ID space.
+        while len(self._summary_actions) > len(lines):
+            a = self._summary_actions.pop()
             self._menu.removeAction(a)
-            a.deleteLater()  # removeAction 不释放对象，防累积
-        self._summary_actions = []
-        for line in lines:  # 依次插到锚点前，保持传入顺序
-            item = QAction(line, self)
+            a.deleteLater()
+        while len(self._summary_actions) < len(lines):
+            item = QAction(self)
             item.setEnabled(False)
             self._menu.insertAction(self._summary_anchor, item)
             self._summary_actions.append(item)
+        for item, line in zip(self._summary_actions, lines):
+            if item.text() != line:
+                item.setText(line)
 
     # ---------- 交互 ----------
 
@@ -438,9 +443,7 @@ class QuotaTray(QObject):
         QDesktopServices.openUrl(QUrl.fromLocalFile(cache_dir()))
 
     def _open_providers(self) -> None:
-        from .providers_dialog import ProvidersDialog
-
-        ProvidersDialog(self._hud, parent=self._hud).exec()
+        self._hud.open_providers()
 
     def _on_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:  # 左键单击

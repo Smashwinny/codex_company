@@ -258,6 +258,12 @@ class FloatingHud(QWidget):
         self._refresh_btn.setToolTip(tr("立即刷新"))
         self._refresh_btn.setStyleSheet(f"color: {FG}; border: none; font-size: 14px;")
         self._refresh_btn.clicked.connect(self.refresh)
+        self._providers_btn = QToolButton()
+        self._providers_btn.setText("＋")
+        self._providers_btn.setToolTip(tr("添加额度来源"))
+        self._providers_btn.setAccessibleName(tr("添加额度来源"))
+        self._providers_btn.setStyleSheet(f"color: {FG}; border: none; font-size: 16px;")
+        self._providers_btn.clicked.connect(self.open_providers)
         self._close_btn = QToolButton()
         self._close_btn.setText("×")
         self._close_btn.setStyleSheet(f"color: {FG_DIM}; border: none; font-size: 14px;")
@@ -268,6 +274,7 @@ class FloatingHud(QWidget):
         title_bar.addWidget(self._title)
         title_bar.addWidget(self._model_badge)
         title_bar.addStretch(1)
+        title_bar.addWidget(self._providers_btn)
         title_bar.addWidget(self._refresh_btn)
         title_bar.addWidget(self._close_btn)
 
@@ -294,6 +301,10 @@ class FloatingHud(QWidget):
             w = item.widget()
             if w is not None:
                 w.deleteLater()
+
+    def open_providers(self) -> None:
+        from .providers_dialog import ProvidersDialog
+        ProvidersDialog(self, parent=self).exec()
 
     def reload_providers(self) -> None:
         """按最新 providers.toml 重建 provider 列表（管理对话框保存后调用）。

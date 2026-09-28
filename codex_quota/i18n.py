@@ -14,6 +14,7 @@ _EN: dict[str, str] = {
     "窗口": "?",
     "5小时": "5-hour",
     "本周": "Weekly",
+    "本月": "Monthly",
     "{h}小时": "{h}-hour",
     "余额": "Balance",
     # 倒计时
@@ -127,6 +128,7 @@ _EN: dict[str, str] = {
         "Open the log folder (send hud.log when reporting issues)",
     # provider 管理
     "管理额度来源": "Manage providers",
+    "添加额度来源": "Add providers",
     "本地工具": "Local tools",
     "云端服务（API key）": "Cloud services (API key)",
     "Codex（本地 codex CLI）": "Codex (local codex CLI)",

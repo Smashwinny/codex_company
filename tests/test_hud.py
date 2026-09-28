@@ -42,6 +42,18 @@ class TestHudSmoke:
     def test_initial_state(self, hud):
         assert "额度监控" in hud._title.text()
 
+    def test_add_provider_button_opens_dialog(self, hud, monkeypatch):
+        from codex_quota.ui import providers_dialog
+        opened = []
+        class Dialog:
+            def __init__(self, owner, parent):
+                assert owner is hud and parent is hud
+            def exec(self):
+                opened.append(True)
+        monkeypatch.setattr(providers_dialog, "ProvidersDialog", Dialog)
+        hud._providers_btn.click()
+        assert opened == [True]
+
     def test_apply_snapshot(self, hud):
         hud._stores["codex"].on_success(snap())
         hud._apply()

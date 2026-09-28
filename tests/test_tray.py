@@ -139,6 +139,20 @@ class TestQuotaTray:
         hud._apply()
         assert "数据陈旧" in t.tray.toolTip()
 
+    def test_refresh_reuses_summary_actions_for_long_running_tray(self, tray):
+        t, _ = tray
+        t._rebuild_summary(["A", "B"])
+        actions = list(t._summary_actions)
+        for index in range(10000):
+            t._rebuild_summary([f"A {index}", "B"])
+        assert t._summary_actions == actions
+        assert actions[0].text() == "A 9999"
+        t._rebuild_summary(["C"])
+        assert t._summary_actions == actions[:1]
+        t._rebuild_summary(["D", "E", "F"])
+        assert t._summary_actions[0] is actions[0]
+        assert len(t._summary_actions) == 3
+
     def test_toggle_hud(self, tray):
         t, hud = tray
         assert not hud.isVisible()

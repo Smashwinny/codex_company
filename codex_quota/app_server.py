@@ -105,6 +105,8 @@ class QuotaWindow:
             return tr("窗口")
         if m <= 360:
             return tr("5小时")
+        if m >= 40000:
+            return tr("本月")
         if m >= 5000:
             return tr("本周")
         return tr("{h}小时").format(h=f"{m / 60:.0f}")

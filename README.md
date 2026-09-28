@@ -98,10 +98,10 @@ Kimi provider 扫描 `~/.kimi-code/server/instances/*.json`，使用120秒内的
 
 ### 管理额度来源（providers）
 
-托盘菜单 → **管理额度来源**，无需编辑文件：
+悬浮窗标题栏 **＋（添加额度来源）**，或托盘菜单 → **管理额度来源 / Manage providers**，无需编辑文件：
 
 - **本地工具**（开关即可）：Codex、Kimi、Claude Code（自动读本地登录凭证）
-- **云端服务**（填 API key）：DeepSeek、OpenRouter——key 可填 `$环境变量` 引用，
+- **云端服务**（填 API key）：GLM (Z.ai)、DeepSeek、OpenRouter——key 可填 `$环境变量` 引用，
   点"测试连接"即时验证，保存即热重载（不用重启）
 - **手动余额**（免 key）：不想提供任何 key 时用——定期把网页上看到的余额
   手填进来，按余额型显示，"更新于 x 天前"的新鲜度会提醒你该更新了
@@ -120,6 +120,11 @@ Kimi provider 扫描 `~/.kimi-code/server/instances/*.json`，使用120秒内的
 > 的 `~/.dsh/.credentials.yaml`**——装了 dsh 并配过 key 的话开箱即用，无需任何输入。
 
 配置文件为 `~/.config/codex-quota/providers.toml`（权限 600），也可手写：
+
+GLM (Z.ai) 使用国际版 Coding Plan 密钥，只读查询
+`https://api.z.ai/api/monitor/usage/quota/limit`，显示 5 小时、周与 MCP 月度额度。
+`https://api.z.ai/api/anthropic` 是模型调用入口，不用于查询额度；添加来源不会调用模型。
+托盘摘要刷新会复用菜单项，避免长期运行不断分配原生菜单编号。
 
 ```toml
 [providers.kimi]
