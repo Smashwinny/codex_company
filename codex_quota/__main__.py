@@ -196,7 +196,7 @@ def _run_hud(args: list[str]) -> int:
                 print(f"手机访问(公网): {hud.public_url}", file=sys.stderr)
             except TunnelError as exc:
                 print(f"公网隧道不可用（仅局域网访问）: {exc}", file=sys.stderr)
-                tunnel = None
+                # 保留实例，让看门狗和手机指令可重试首次启动失败的隧道。
 
     # 额度重置推送：ntfy 主题（主题即凭证，自动生成持久化）
     new_ntfy_topic = False
@@ -223,28 +223,6 @@ def _run_hud(args: list[str]) -> int:
                 f"📱 手机访问地址（点通知直接打开）：\n{url}",
                 tags="link", click=url)
 
-    # 手机反向触发：向 <主题>-cmd 发命令 → 回推结果（点通知直达网页）。
-    # url=要地址；列表=看重置提醒开关；kimi5/spark 等关键词=切换对应提醒。
-    # 地址类回调读取的是触发时刻的 hud.public_url，隧道重连后始终推最新值
-    cmd_listener = None
-    if hud.notifier is not None and (hud.public_url or hud.web_url):
-        from .notify import NtfyCommandListener
-        from .remote_cmd import handle_command
-
-        def _on_phone_command(msg: str):
-            body, click = handle_command(msg, hud._current_views(), settings,
-                                         url=hud.public_url or hud.web_url)
-            if body:
-                hud.notifier.publish("codex-quota", body, tags="link", click=click)
-
-        cmd_topic = hud.notifier.topic + "-cmd"
-        cmd_listener = NtfyCommandListener(hud.notifier.server, cmd_topic,
-                                           _on_phone_command)
-        cmd_listener.start()
-        print(f"手机远程命令: ntfy 向主题 {cmd_topic} 发送 "
-              f"url（要地址）/ 列表（看提醒开关）/ kimi5 等关键词（切换提醒）",
-              file=sys.stderr)
-
     if QSystemTrayIcon.isSystemTrayAvailable():
         from .ui.tray import QuotaTray
 
@@ -265,6 +243,8 @@ def _run_hud(args: list[str]) -> int:
 
         NotifyGuideDialog(hud.notifier, parent=hud).exec()
 
+    restart_url = None
+
     # 隧道看门狗：cloudflared 死亡 → 限流自动重连 → ntfy 推送新地址
     if tunnel is not None:
         import threading
@@ -273,23 +253,23 @@ def _run_hud(args: list[str]) -> int:
 
         _policy = RestartPolicy()
         _log = logging.getLogger("codex_quota")
-        _restart_busy = threading.Event()
+        _restart_busy = threading.Lock()
         tunnel_restart_stop = threading.Event()
         tunnel_restart_gate = threading.Lock()
 
-        def _restart_tunnel():
+        def _restart_tunnel(manual=False):
             try:
                 if tunnel_restart_stop.is_set():
                     return
-                _log.warning("cloudflared 已退出，尝试自动重连")
-                if not _policy.allow():
-                    _log.warning("隧道重连过于频繁，进入冷却（10 分钟内最多 5 次）")
-                    return
+                _log.warning("尝试%s重连 cloudflared", "手机手动" if manual else "自动")
+                hud.public_url = None
                 try:
                     base = _start_tunnel_guarded(
                         tunnel, tunnel_restart_stop, tunnel_restart_gate)
                 except Exception as exc:
                     _log.warning("隧道重连失败: %s", exc)
+                    if manual and hud.notifier is not None and not tunnel_restart_stop.is_set():
+                        hud.notifier.publish("codex-quota", "公网隧道重连失败，请稍后发送 urlrestartcmd 重试。")
                     return
                 if base is None or tunnel_restart_stop.is_set():
                     return
@@ -301,30 +281,61 @@ def _run_hud(args: list[str]) -> int:
                         f"📱 手机访问新地址（隧道已重连）：\n{hud.public_url}",
                         tags="link", click=hud.public_url)
             finally:
-                _restart_busy.clear()
+                _restart_busy.release()
 
-        def _check_tunnel():
+        def _request_restart(manual=False):
             nonlocal tunnel_restart_thread
-            # start() 会阻塞数秒，放后台线程避免卡 UI
-            if (tunnel_restart_stop.is_set() or tunnel.is_alive()
-                    or _restart_busy.is_set()):
-                return
-            _restart_busy.set()
+            if tunnel_restart_stop.is_set():
+                return "程序正在退出，无法重连"
+            if not manual and tunnel.is_alive():
+                return ""
+            # 手机监听线程与 Qt 看门狗共用非阻塞锁，原子阻止重复启动。
+            if not _restart_busy.acquire(blocking=False):
+                return "隧道正在重连，请等待新地址通知"
+            if not _policy.allow():
+                _restart_busy.release()
+                return "隧道重连过于频繁，请稍后重试（10 分钟内最多 5 次）"
             try:
                 tunnel_restart_thread = threading.Thread(
-                    target=_restart_tunnel, daemon=True,
+                    target=_restart_tunnel, args=(manual,), daemon=True,
                     name="cloudflared-restart")
                 tunnel_restart_thread.start()
             except Exception as exc:
-                # 线程起不来时 busy 必须释放——否则看门狗永久失效
-                _restart_busy.clear()
+                _restart_busy.release()
                 _log.warning("隧道重连线程启动失败: %s", exc)
+                return "无法启动重连任务，请稍后重试"
+            return "已开始重建公网隧道，完成后会推送新地址；域名生效可能需要稍等片刻"
+
+        restart_url = lambda: _request_restart(manual=True)
 
         tunnel_watchdog = QTimer()
         tunnel_watchdog.setInterval(30_000)
-        tunnel_watchdog.timeout.connect(_check_tunnel)
+        tunnel_watchdog.timeout.connect(_request_restart)
         tunnel_watchdog.start()
         hud._tunnel_watchdog = tunnel_watchdog  # 防 GC
+
+    # 手机反向触发：向 <主题>-cmd 发命令 → 回推结果（点通知直达网页）。
+    # url=要地址；列表=看重置提醒开关；kimi5/spark 等关键词=切换对应提醒。
+    # 地址类回调读取的是触发时刻的 hud.public_url，隧道重连后始终推最新值
+    cmd_listener = None
+    if hud.notifier is not None:
+        from .notify import NtfyCommandListener
+        from .remote_cmd import handle_command
+
+        def _on_phone_command(msg: str):
+            body, click = handle_command(msg, hud._current_views(), settings,
+                                         url=hud.public_url or hud.web_url,
+                                         restart_url=restart_url)
+            if body:
+                hud.notifier.publish("codex-quota", body, tags="link", click=click)
+
+        cmd_topic = hud.notifier.topic + "-cmd"
+        cmd_listener = NtfyCommandListener(hud.notifier.server, cmd_topic,
+                                           _on_phone_command)
+        cmd_listener.start()
+        print(f"手机远程命令: ntfy 向主题 {cmd_topic} 发送 "
+              f"url（要地址）/ urlrestartcmd（重连）/ 列表 / zai5 on 等（提醒开关）",
+              file=sys.stderr)
 
     # 优雅退出：SIGTERM/SIGINT → 正常退出事件循环，finally 回收子进程
     # （kimi web / cloudflared 都在独立进程组，主进程被杀不会连带，必须主动清理）
@@ -349,11 +360,13 @@ def _run_hud(args: list[str]) -> int:
     finally:
         # 先原子关闭重连入口，再等待已在途的 start() 完成；这样后面的 stop()
         # 与 children.pid 删除之后，绝不会有后台线程重新 spawn cloudflared。
+        if tunnel_restart_stop is not None:
+            tunnel_restart_stop.set()
+        if cmd_listener is not None:
+            cmd_listener.stop()
         _quiesce_tunnel_restart(
             tunnel_watchdog, tunnel_restart_stop,
             tunnel_restart_gate, tunnel_restart_thread)
-        if cmd_listener is not None:
-            cmd_listener.stop()
         if hud.notifier is not None:
             hud.notifier.close()
         if tunnel is not None:

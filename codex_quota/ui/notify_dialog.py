@@ -71,7 +71,7 @@ class NotifyGuideDialog(QDialog):
         cmd_lay.addWidget(self._hint(tr(
             "在 ntfy App 里再订阅下面的命令主题。想用手机看仪表盘时向它发送 url "
             "——电脑回推当前地址，点通知直达网页；发送 列表 查看各额度提醒开关；"
-            "发送 kimi5、spark 这类关键词可直接开/关对应窗口的重置提醒")))
+            "链接失效时发送 urlrestartcmd 重建公网地址；发送 zai5 on / zai5 off 开关 GLM 5小时重置提醒，zai on / zai off 开关 GLM 全部提醒；发送 help 查看指令")))
         cmd_lay.addLayout(self._copy_row(tr("命令主题"), cmd_topic))
         lay.addWidget(cmd_card)
 

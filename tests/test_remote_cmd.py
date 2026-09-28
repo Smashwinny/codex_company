@@ -82,3 +82,66 @@ def test_window_keys_match_summary_convention():
     assert "Codex · 本周" in labels
     assert "Codex · 5小时" in labels
     assert "Codex · GPT-5.3-Codex-Spark · 本周" in labels
+
+
+def _zai_views():
+    from codex_quota.providers.zai import parse_quota
+    snapshot = parse_quota({"code": 200, "data": {"limits": [
+        {"type": "TOKENS_LIMIT", "unit": 3, "number": 5, "percentage": 12},
+        {"type": "TOKENS_LIMIT", "unit": 6, "number": 1, "percentage": 34},
+        {"type": "TIME_LIMIT", "unit": 5, "number": 1, "percentage": 56},
+    ]}})
+    return [SimpleNamespace(name="zai", display_name="GLM (Z.ai)",
+                            state=SimpleNamespace(snapshot=snapshot))]
+
+
+def test_restart_command_dispatches_instead_of_returning_old_url():
+    calls = []
+    body, click = handle_command(" URLRestartCmd ", [], _settings(),
+                                url="https://old.invalid", restart_url=lambda: (
+                                    calls.append(True) or "已开始重连"))
+    assert calls == [True]
+    assert body == "已开始重连" and click == ""
+
+
+def test_restart_unavailable_and_typo_does_not_restart():
+    assert "未开启" in handle_command("urlrestartcmd", [], _settings())[0]
+    def forbidden():
+        raise AssertionError("非白名单指令不应重启")
+    body, _ = handle_command("urlrestartcmd now", [], _settings(), restart_url=forbidden)
+    assert "没认出" in body
+
+
+def test_zai_explicit_switches_are_idempotent_and_scoped():
+    views = _views() + _zai_views()
+    settings = _settings()
+    for command in ("zai5 off", "GLM5 OFF"):
+        body, _ = handle_command(command, views, settings)
+        assert "已关闭" in body
+        assert settings.get("notify_excludes") == ["zai:Coding:5小时"]
+    handle_command("zai本周 关闭", views, settings)
+    assert key_excluded("zai:Coding:本周", settings.get("notify_excludes"))
+    handle_command("zai本月 off", views, settings)
+    assert key_excluded("zai:MCP:本月", settings.get("notify_excludes"))
+    handle_command("glm on", views, settings)
+    assert settings.get("notify_excludes") == []
+    handle_command("zai off", views, settings)
+    assert len(settings.get("notify_excludes")) == 3
+    assert all(k.startswith("zai:") for k in settings.get("notify_excludes"))
+
+
+def test_zai_enable_one_preserves_other_disabled_windows():
+    settings = _settings()
+    settings.set("notify_excludes", ["zai"])
+    handle_command("zai5 on", _zai_views(), settings)
+    excludes = settings.get("notify_excludes")
+    assert not key_excluded("zai:Coding:5小时", excludes)
+    assert key_excluded("zai:Coding:本周", excludes)
+    assert key_excluded("zai:MCP:本月", excludes)
+
+
+def test_zai_no_data_does_not_modify_settings():
+    settings = _settings()
+    settings.set("notify_excludes", ["codex"])
+    handle_command("zai off", _views(), settings)
+    assert settings.get("notify_excludes") == ["codex"]
