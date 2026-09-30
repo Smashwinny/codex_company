@@ -213,7 +213,7 @@ const T = {{
        ago_s: "s ago", ago_m: "m ago", ago_h: "h ago", updated: "updated ",
        nodata: "no data", stale: "stale"}}
 }}[LANG];
-const PCOLORS = {{codex: "#3fb950", kimi: "#a371f7"}};
+const PCOLORS = {{codex: "#3fb950", kimi: "#a371f7", glm: "#2f81f7"}};
 function color(rem) {{
   if (rem == null) return "#8b949e";
   return rem <= {crit} ? "#f85149" : rem <= {warn} ? "#d29922" : "#3fb950";

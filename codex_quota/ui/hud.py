@@ -62,7 +62,7 @@ def _short(text: object, limit: int) -> str:
     return s if len(s) <= limit else s[: limit - 1] + "…"
 
 # provider 分区标识色
-PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7"}
+PROVIDER_COLORS = {"codex": "#3fb950", "kimi": "#a371f7", "glm": "#2f81f7"}
 
 # 模型徽章：fast（Spark / fast tier）用实心橙 pill + ⚡；普通模型用灰描边 pill
 BADGE_FAST_STYLE = (

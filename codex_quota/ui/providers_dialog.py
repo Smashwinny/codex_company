@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from ..i18n import tr
 from ..providers.config import load_providers_config, save_providers_config
 from ..providers.deepseek import DeepSeekProvider, read_dsh_api_key
+from ..providers.glm import GLMProvider
 from ..providers.openrouter import OpenRouterProvider
 from ..state import StateStore
 from .theme import DIALOG_STYLE, FG_DIM, style_section
@@ -35,6 +36,7 @@ from .theme import DIALOG_STYLE, FG_DIM, style_section
 KEY_PROVIDER_SPECS = [
     {"type": "deepseek", "label": "DeepSeek", "cls": DeepSeekProvider},
     {"type": "openrouter", "label": "OpenRouter", "cls": OpenRouterProvider},
+    {"type": "glm", "label": "GLM（智谱）", "cls": GLMProvider},
 ]
 
 
@@ -131,7 +133,10 @@ class ProvidersDialog(QDialog):
         lay.addWidget(local_label)
         self._codex_cb = QCheckBox(tr("Codex（本地 codex CLI）"))
         self._codex_cb.setChecked(bool(cfg.get("codex", {}).get("enabled", True)))
-        self._kimi_cb = QCheckBox(tr("Kimi（本地 kimi CLI）"))
+        if cfg.get("kimi", {}).get("api_key"):
+            self._kimi_cb = QCheckBox(tr("Kimi（云端 API key）"))
+        else:
+            self._kimi_cb = QCheckBox(tr("Kimi（本地 kimi CLI）"))
         self._kimi_cb.setChecked(bool(cfg.get("kimi", {}).get("enabled", True)))
         self._claude_cb = QCheckBox(tr("Claude Code（本地登录凭证）"))
         self._claude_cb.setChecked(bool(cfg.get("claude", {}).get("enabled", True)))
@@ -227,7 +232,13 @@ class ProvidersDialog(QDialog):
     def _save(self) -> None:
         cfg = load_providers_config()
         cfg["codex"] = {"enabled": self._codex_cb.isChecked()}
-        cfg["kimi"] = {"enabled": self._kimi_cb.isChecked()}
+        kimi_prev = cfg.get("kimi", {})
+        if kimi_prev.get("api_key"):
+            # API key 模式：保留 key/base_url，只改开关（key 仅在 providers.toml 手写维护）
+            kimi_prev["enabled"] = self._kimi_cb.isChecked()
+            cfg["kimi"] = kimi_prev
+        else:
+            cfg["kimi"] = {"enabled": self._kimi_cb.isChecked()}
         cfg["claude"] = {"enabled": self._claude_cb.isChecked()}
         for spec in KEY_PROVIDER_SPECS:
             row = self._rows[spec["type"]]

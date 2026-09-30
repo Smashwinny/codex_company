@@ -34,6 +34,7 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     from .claude_code import ClaudeCodeProvider, credentials_path
     from .codex import CodexProvider
     from .deepseek import DeepSeekProvider, read_dsh_api_key
+    from .glm import GLMProvider
     from .kimi import KimiProvider, find_kimi_bin
     from .openrouter import OpenRouterProvider
 
@@ -49,7 +50,15 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
     if enabled("claude") and (credentials_path() is not None
                               or cfg.get("claude", {}).get("type") == "claude"):
         providers.append(ClaudeCodeProvider())
-    if enabled("kimi") and find_kimi_bin() is not None:
+    # Kimi：providers.toml 配了 api_key 走云端 API（无需本地 CLI）；否则回退本地 kimi web
+    kimi_section = cfg.get("kimi", {})
+    if enabled("kimi") and kimi_section.get("api_key"):
+        from .kimi_api import KimiApiProvider
+        providers.append(KimiApiProvider(
+            api_key=kimi_section.get("api_key"),
+            display_name=kimi_section.get("display_name") or "Kimi",
+        ))
+    elif enabled("kimi") and find_kimi_bin() is not None:
         providers.append(KimiProvider())
 
     # 配置中的密钥型预设 provider
@@ -65,6 +74,14 @@ def default_providers(config_path: str | None = None) -> list[Provider]:
             providers.append(OpenRouterProvider(
                 api_key=section.get("api_key"),
                 display_name=section.get("display_name") or "OpenRouter",
+            ))
+        elif section.get("type") == "glm":
+            providers.append(GLMProvider(
+                api_key=section.get("api_key"),
+                display_name=section.get("display_name") or "GLM",
+                base_url=section.get("base_url") or "https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+                organization=section.get("organization"),
+                project=section.get("project"),
             ))
         elif section.get("type") == "manual":
             from .manual import ManualProvider
